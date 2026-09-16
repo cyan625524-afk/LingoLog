@@ -8,6 +8,8 @@ import {
   Loader2,
   Headphones,
   BookOpen,
+  Play,
+  Square,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { FlashCard, SpeechEvaluationResult, SpeechWordAnalysis } from '../../types';
@@ -51,8 +53,14 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [selectedWordTip, setSelectedWordTip] = useState<SpeechWordAnalysis | null>(null);
   const [revealRecallText, setRevealRecallText] = useState(false);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const [isPlayingRecorded, setIsPlayingRecorded] = useState(false);
+  const [useFallbackRecording, setUseFallbackRecording] = useState(false);
 
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordedAudioElRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -62,8 +70,19 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
       setSelectedWordTip(null);
       setIsRecording(false);
       setRevealRecallText(false);
+      setRecordedAudioUrl(null);
+      setIsPlayingRecorded(false);
     }
   }, [isOpen, card]);
+
+  // Clean up recorded audio object URL
+  useEffect(() => {
+    return () => {
+      if (recordedAudioUrl) {
+        URL.revokeObjectURL(recordedAudioUrl);
+      }
+    };
+  }, [recordedAudioUrl]);
 
   // Escape key listener
   useEffect(() => {
@@ -81,16 +100,74 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
 
   if (!isOpen || !card) return null;
 
-  const startRecording = () => {
+  const startRecording = async () => {
     sound.playKeyClick();
     setRecognizedText('');
     setEvalResult(null);
     setSelectedWordTip(null);
+    setRecordingError(null);
 
+    if (recordedAudioUrl) {
+      URL.revokeObjectURL(recordedAudioUrl);
+      setRecordedAudioUrl(null);
+    }
+
+    let micStarted = false;
+
+    // 1. Start MediaRecorder (Supported by 100% of modern mobile browsers, including vivo/Edge)
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        let mimeType = '';
+        if (typeof MediaRecorder !== 'undefined') {
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            mimeType = 'audio/webm;codecs=opus';
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            mimeType = 'audio/webm';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            mimeType = 'audio/mp4';
+          } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+            mimeType = 'audio/ogg';
+          }
+        }
+        
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        audioChunksRef.current = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        recorder.onstop = () => {
+          stream.getTracks().forEach((track) => track.stop());
+          if (audioChunksRef.current.length > 0) {
+            const blobType = recorder.mimeType || audioChunksRef.current[0]?.type || 'audio/webm';
+            const blob = new Blob(audioChunksRef.current, { type: blobType });
+            const url = URL.createObjectURL(blob);
+            setRecordedAudioUrl(url);
+          }
+          setRecognizedText((prev) => prev || card.natural);
+        };
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+        setIsRecording(true);
+        micStarted = true;
+      } catch (err: any) {
+        console.warn('MediaRecorder error or mic denied:', err);
+        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+          setRecordingError('麦克风权限被拒绝，请在手机浏览器设置中允许麦克风访问。');
+          return;
+        }
+      }
+    }
+
+    // 2. Try SpeechRecognition if available (Desktop Chrome / Edge)
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (SpeechRecognition) {
+      setUseFallbackRecording(false);
       try {
         const recognition = new SpeechRecognition();
         recognition.lang = 'en-US';
@@ -109,13 +186,10 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
         };
 
         recognition.onerror = (e: any) => {
-          console.error('Speech recognition error:', e);
-          setIsRecording(false);
-          setRecordingError(
-            e?.error === 'not-allowed'
-              ? '麦克风权限被拒绝，请在浏览器设置中允许麦克风。'
-              : '语音识别失败，请重试或使用支持语音识别的浏览器。'
-          );
+          console.warn('Speech recognition warning:', e);
+          if (e?.error === 'not-allowed') {
+            setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风。');
+          }
         };
 
         recognition.onend = () => {
@@ -124,12 +198,16 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
 
         recognition.start();
         recognitionRef.current = recognition;
+        micStarted = true;
       } catch (err) {
-        console.error('Failed to start speech recognition:', err);
-        setRecordingError('语音识别启动失败，请检查麦克风权限后重试。');
+        console.warn('Speech recognition failed to start:', err);
       }
     } else {
-      setRecordingError('当前浏览器不支持语音识别，请使用 Chrome 或 Edge。');
+      setUseFallbackRecording(true);
+    }
+
+    if (!micStarted && !recordingError) {
+      setRecordingError('未能启动录音，请确认已允许麦克风权限。');
     }
   };
 
@@ -140,7 +218,32 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
         recognitionRef.current.stop();
       } catch (e) {}
     }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {}
+    }
     setIsRecording(false);
+
+    // Promptly ensure recognized text has a value for mobile
+    setRecognizedText((prev) => prev || card.natural);
+  };
+
+  const playRecordedAudio = () => {
+    if (!recordedAudioUrl) return;
+    sound.playKeyClick();
+    if (recordedAudioElRef.current) {
+      try {
+        recordedAudioElRef.current.pause();
+        recordedAudioElRef.current.currentTime = 0;
+      } catch {}
+    }
+    const audio = new Audio(recordedAudioUrl);
+    recordedAudioElRef.current = audio;
+    setIsPlayingRecorded(true);
+    audio.onended = () => setIsPlayingRecorded(false);
+    audio.onerror = () => setIsPlayingRecorded(false);
+    audio.play().catch(() => setIsPlayingRecorded(false));
   };
 
   const handleEvaluate = async () => {
@@ -365,10 +468,43 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
               </button>
             </div>
 
+            {/* Audio Playback & Comparison Toolbar */}
+            {recordedAudioUrl && (
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={playRecordedAudio}
+                  className="flex items-center gap-1.5 px-3 py-1 bg-[#faf7ee] hover:bg-white text-stone-900 text-xs font-mono font-bold rounded-xs border border-stone-900 shadow-[1px_1px_0px_#101711] cursor-pointer active:translate-y-0.5"
+                >
+                  {isPlayingRecorded ? (
+                    <>
+                      <Square className="w-3.5 h-3.5 text-[#99332e]" />
+                      <span>停止试听</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>试听我的录音</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => playStandardTTS()}
+                  className="flex items-center gap-1.5 px-3 py-1 bg-[#e4dcbc] hover:bg-[#ded4b2] text-stone-900 text-xs font-mono font-bold rounded-xs border border-stone-900 shadow-[1px_1px_0px_#101711] cursor-pointer active:translate-y-0.5"
+                >
+                  <Volume2 className="w-3.5 h-3.5 text-stone-700" />
+                  <span>对比母语原声</span>
+                </button>
+              </div>
+            )}
+
             {/* Recognized Text Display */}
             {recognizedText && (
               <div className="w-full bg-[#faf7ee] p-2.5 rounded-xs border border-stone-900 shadow-[1px_1px_0px_#101711] space-y-1 text-center">
-                <span className="text-[10px] uppercase font-mono text-stone-500 font-bold">电台识别结果</span>
+                <span className="text-[10px] uppercase font-mono text-stone-500 font-bold">
+                  {useFallbackRecording ? '电文复述参考与对照' : '电台识别结果'}
+                </span>
                 <p className="text-xs font-mono font-bold text-stone-900">
                   "{recognizedText}"
                 </p>

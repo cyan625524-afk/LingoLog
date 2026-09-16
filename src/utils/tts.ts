@@ -1,13 +1,69 @@
 // Text-to-Speech & Speech Recognition Helper
 
-export function speakEnglishText(text: string, rate: number = 0.95): Promise<void> {
+let currentAudio: HTMLAudioElement | null = null;
+
+function fallbackSpeechSynthesis(cleanText: string, rate: number = 0.95): Promise<void> {
   return new Promise((resolve) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       resolve();
       return;
     }
 
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.lang = 'en-US';
+      utterance.rate = rate;
+      utterance.pitch = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      const englishVoice =
+        voices.find(
+          (v) =>
+            (v.lang === 'en-US' || v.lang.startsWith('en')) &&
+            (v.name.includes('Natural') ||
+              v.name.includes('Google') ||
+              v.name.includes('Samantha') ||
+              v.name.includes('Daniel') ||
+              v.name.includes('Jenny') ||
+              v.name.includes('Guy'))
+        ) || voices.find((v) => v.lang.startsWith('en'));
+
+      if (englishVoice) {
+        utterance.voice = englishVoice;
+      }
+
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      resolve();
+    }
+  });
+}
+
+export function speakEnglishText(text: string, rate: number = 0.95): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve();
+      return;
+    }
+
+    // Stop previous audio playback
+    if (currentAudio) {
+      try {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      } catch {}
+      currentAudio = null;
+    }
+
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
 
     // Clean text of markdown asterisks or special characters
     const cleanText = text.replace(/[*_~`]/g, '').trim();
@@ -16,30 +72,49 @@ export function speakEnglishText(text: string, rate: number = 0.95): Promise<voi
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'en-US';
-    utterance.rate = rate;
-    utterance.pitch = 1.0;
+    // Check if desktop browser has high-fidelity Natural voice
+    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+    const hasNaturalVoice = voices.some(
+      (v) => v.name.includes('Natural') || v.name.includes('Online')
+    );
 
-    // Pick best English voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const englishVoice = voices.find(
-      (v) =>
-        (v.lang === 'en-US' || v.lang.startsWith('en')) &&
-        (v.name.includes('Natural') ||
-          v.name.includes('Google') ||
-          v.name.includes('Samantha') ||
-          v.name.includes('Daniel'))
-    ) || voices.find((v) => v.lang.startsWith('en'));
+    // If on mobile or no desktop Natural neural voice is installed, use high-fidelity native audio stream
+    const isMobile =
+      typeof navigator !== 'undefined' &&
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
-    if (englishVoice) {
-      utterance.voice = englishVoice;
+    if ((isMobile || !hasNaturalVoice) && cleanText.length <= 300) {
+      try {
+        // High-definition American English native audio stream (type=2: American, type=1: British)
+        const audioUrl = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(cleanText)}&type=2`;
+        const audio = new Audio(audioUrl);
+        currentAudio = audio;
+
+        audio.onended = () => {
+          currentAudio = null;
+          resolve();
+        };
+
+        audio.onerror = () => {
+          currentAudio = null;
+          fallbackSpeechSynthesis(cleanText, rate).then(resolve);
+        };
+
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {
+            currentAudio = null;
+            fallbackSpeechSynthesis(cleanText, rate).then(resolve);
+          });
+        }
+        return;
+      } catch {
+        // fallback if Audio construction fails
+      }
     }
 
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
-
-    window.speechSynthesis.speak(utterance);
+    // Fallback or desktop Edge with Natural voice
+    fallbackSpeechSynthesis(cleanText, rate).then(resolve);
   });
 }
 

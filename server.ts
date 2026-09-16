@@ -15,7 +15,12 @@ const app = express();
 // 云平台会通过环境变量注入端口，写死会导致部署后访问不了。
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: "512kb" }));
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === "object") {
+    return next();
+  }
+  express.json({ limit: "512kb" })(req, res, next);
+});
 
 // API 响应一律不缓存：避免密钥或中间结果被浏览器 / 代理留存。
 app.use("/api", (_req, res, next) => {
@@ -408,7 +413,7 @@ async function callOpenAICompatible(opts: LLMCallOptions): Promise<string> {
     process.env.OPENAI_COMPATIBLE_API_KEY ||
     process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("缺少 API 密钥。");
-  const model = opts.model || "deepseek-flash";
+  const model = opts.model || "deepseek-chat";
   const url = normalizeChatUrl(opts.baseUrl || "");
 
   // 有些服务商不支持 response_format，失败就退回纯提示词约束

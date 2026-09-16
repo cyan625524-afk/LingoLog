@@ -328,7 +328,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     onClick={handleSpeak}
-                    className="px-3.5 py-1.5 rounded-xs bg-[#d49e3d] hover:bg-[#c99333] border-2 border-stone-900 text-stone-950 text-xs font-serif-display font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-[2px_2px_0px_#101711]"
+                    className="flex-1 sm:flex-initial px-3.5 py-2 sm:py-1.5 rounded-xs bg-[#d49e3d] hover:bg-[#c99333] border-2 border-stone-900 text-stone-950 text-xs font-serif-display font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-[2px_2px_0px_#101711]"
                   >
                     <Volume2 className="w-4 h-4 text-stone-900" />
                     <span>朗读电文</span>
@@ -336,7 +336,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
 
                   <button
                     onClick={handleCopy}
-                    className="px-3 py-1.5 rounded-xs bg-[#faf7ee] hover:bg-white border-2 border-stone-900 text-stone-800 text-xs font-serif-display font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-[2px_2px_0px_#101711]"
+                    className="flex-1 sm:flex-initial px-3 py-2 sm:py-1.5 rounded-xs bg-[#faf7ee] hover:bg-white border-2 border-stone-900 text-stone-800 text-xs font-serif-display font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-[2px_2px_0px_#101711]"
                   >
                     {copied ? (
                       <>
@@ -357,7 +357,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                         sound.playKeyClick();
                         onOpenSpeechPractice(card);
                       }}
-                      className="px-3.5 py-1.5 rounded-xs bg-[#243427] hover:bg-[#1b271e] text-[#f7f2e4] text-xs font-serif-display font-bold flex items-center gap-1.5 transition-all cursor-pointer border-2 border-stone-900 shadow-[2px_2px_0px_#101711] ml-auto"
+                      className="w-full sm:w-auto sm:ml-auto px-3.5 py-2 sm:py-1.5 rounded-xs bg-[#243427] hover:bg-[#1b271e] text-[#f7f2e4] text-xs font-serif-display font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border-2 border-stone-900 shadow-[2px_2px_0px_#101711]"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-[#d49e3d]" />
                       <span>多维发音实训</span>

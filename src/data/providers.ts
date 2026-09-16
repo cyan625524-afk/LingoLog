@@ -29,7 +29,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: 'DeepSeek 深度求索',
     provider: 'openai-compatible',
     baseUrl: 'https://api.deepseek.com',
-    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    models: ['deepseek-chat', 'deepseek-reasoner'],
     keyHint: 'sk-...',
     note: '国内直连，无需代理',
   },

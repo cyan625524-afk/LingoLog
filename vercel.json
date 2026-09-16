@@ -5,6 +5,12 @@
     },
     "api/[...path].ts": {
       "maxDuration": 60
+    },
+    "api/health.ts": {
+      "maxDuration": 30
+    },
+    "api/inbox.ts": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

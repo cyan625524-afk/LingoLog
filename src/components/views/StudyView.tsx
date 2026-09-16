@@ -270,7 +270,9 @@ export const StudyView: React.FC<StudyViewProps> = ({
   };
 
   // Smart Fallback Card Generator
-  const createFallbackCard = (rawText: string): FlashCard => {
+  // 返回 null = 离线词库确实没有这条表达。调用方必须如实说明，
+  // 不要造一张空卡片，更不要拿一句无关的英文顶上。
+  const createFallbackCard = (rawText: string): FlashCard | null => {
     const localMatch = findInspirationMatch(rawText);
     if (localMatch) {
       const c = createCardFromInspiration(localMatch);
@@ -282,13 +284,22 @@ export const StudyView: React.FC<StudyViewProps> = ({
     }
 
     const spokenResult = translateSpokenInput(rawText);
+    if (!spokenResult) return null;
+
     const highlights: string[] = pickCoreHighlights(spokenResult.natural);
+
+    // 只命中「主题关键词」规则时，给的是同主题的模板句，不是原句的翻译。
+    // 这种情况必须在卡片里写明，否则用户会当成逐句翻译去背。
+    const topicNotice =
+      spokenResult.confidence === 'topic'
+        ? '⚠️ 离线词库没有收录这句话的逐句译法。下面这条是「同主题的地道表达」，只能当灵感参考，不能当成你这句话的翻译。\n\n'
+        : '';
 
     return {
       id: `card-${Date.now()}`,
       original: rawText,
       natural: spokenResult.natural,
-      explanation: spokenResult.explanation,
+      explanation: topicNotice + spokenResult.explanation,
       category: normalizeCategory(spokenResult.category),
       tags: sanitizeTags(spokenResult.tags),
       phrases: spokenResult.phrases || [],
@@ -427,11 +438,18 @@ export const StudyView: React.FC<StudyViewProps> = ({
 
     if (!cardSuccess) {
       const fallbackCard = createFallbackCard(query);
-      sound.playCarriageReturn();
-      sound.playMorseSidetone('ack');
-      setGeneratedCard(fallbackCard);
-      setIsMobileCardModalOpen(true);
-      setLoadError('电报局专线繁忙，已自动启用离线地道语料库为你拍发并解析电文。');
+      if (fallbackCard) {
+        sound.playCarriageReturn();
+        sound.playMorseSidetone('ack');
+        setGeneratedCard(fallbackCard);
+        setIsMobileCardModalOpen(true);
+        setLoadError('电报局专线繁忙，已自动启用离线地道语料库为你拍发并解析电文。');
+      } else {
+        // 离线词库确实没有这条 —— 如实说明，不给假答案。
+        setLoadError(
+          '电报局专线没接通，离线词库也没有收录这条表达。这里不会给你一句「看起来像答案」的英文：猜错了你照着背，比没有更糟。请点右上角「开启引擎」配置 API 密钥，由模型给你真实的地道表达。'
+        );
+      }
     }
 
     // Finish punch-tape animation: hit 100% then settle back to idle full tape

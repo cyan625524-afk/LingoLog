@@ -60,8 +60,51 @@ function redact(value: unknown): string {
   return out;
 }
 
-// 跨域支持（允许油猴脚本和外部助手调用）
+// ── CORS ────────────────────────────────────────────────────────────────
+// 绝大多数接口的调用方就是本站前端（同源），通配 * 没有额外风险。
+//
+// /api/inbox 不一样：它的调用方之一是跑在 gemini.google.com 上的油猴脚本，
+// 是真正的跨域请求。而它又是个「写入 + 读取并清空」的接口 —— 一旦给它 *
+// 通配，用户浏览器上打开的任何网页都能 fetch 到它，把队列搬走。
+// 所以收件箱单独走 Origin 白名单：只对白名单来源回 CORS 头。
+//
+// 注意 CORS 只保护「读」。但油猴脚本用 application/json 发 POST 会触发
+// preflight，不在白名单的来源连实际请求都发不出去 —— 写也被挡住了。
+const INBOX_DEFAULT_ORIGINS = [
+  "https://gemini.google.com", // 油猴脚本的运行位置
+  "https://lingo-log-three.vercel.app", // 本站（同源请求通常不带 Origin，这里兜底）
+];
+
+function getInboxAllowedOrigins(): string[] {
+  const extra = (process.env.INBOX_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...INBOX_DEFAULT_ORIGINS, ...extra];
+}
+
 app.use((req, res, next) => {
+  const isInbox = req.path === "/api/inbox" || req.path.startsWith("/api/inbox/");
+
+  if (isInbox) {
+    const origin = req.get("Origin");
+    if (origin && getInboxAllowedOrigins().includes(origin)) {
+      // 回显具体来源，而不是 * —— 通配等于对全网开放读取。
+      res.header("Access-Control-Allow-Origin", origin);
+      res.header("Vary", "Origin");
+    }
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, X-LingoLog-Access-Token, X-Inbox-Token"
+    );
+    res.header("Cache-Control", "no-store");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    return next();
+  }
+
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, X-LingoLog-Access-Token, X-Inbox-Token");
@@ -72,6 +115,18 @@ app.use((req, res, next) => {
 });
 
 // ── Gemini 等外部助手一键推送收件箱（纯内存队列，不写磁盘，避免 Vite 触发整页刷新） ──
+//
+// 访问控制这里改过一次，原因值得记下来：
+// 原先要求两个环境变量（ENABLE_INBOX=true + INBOX_TOKEN）才能用。问题是这两样
+// 都得手工去平台后台配，漏配一个接口就是 404 / 401，从外面看和「功能是坏的」
+// 没有区别 —— 而配环境变量的人不是用这个功能的人。所以改成：
+//
+//   主防线 = Origin 白名单（上面的中间件），零配置就有真实防护；
+//   可选增强 = INBOX_TOKEN，配了才校验，没配不要求。
+//
+// ⚠️ 架构限制（不是这个文件能修的）：inboxQueue 是模块级内存。serverless
+// 每个实例内存独立、冷启动即清空 —— 推送和拉取落在不同实例上就会
+// 「推成功了但读不到」。要真正可靠，得换云数据库。
 let inboxQueue: Array<{ id: string; text: string; createdAt: string }> = [];
 const INBOX_MAX_ITEMS = 100;
 const INBOX_MAX_TEXT_LENGTH = 4000;
@@ -81,12 +136,21 @@ function hasValidAccessToken(req: express.Request, configuredToken?: string): bo
   return req.get("X-LingoLog-Access-Token") === configuredToken;
 }
 
+/** 收件箱门禁：非白名单来源直接拒；INBOX_TOKEN 若配置了则额外校验。 */
 function requireInboxAccess(req: express.Request, res: express.Response): boolean {
-  if (process.env.ENABLE_INBOX !== "true") {
-    res.status(404).json({ error: "inbox_disabled" });
+  const origin = req.get("Origin");
+  if (origin && !getInboxAllowedOrigins().includes(origin)) {
+    res.status(403).json({
+      error: "inbox_origin_forbidden",
+      message: `来源 ${origin} 不在收件箱白名单里。要放行，把它加进环境变量 INBOX_ALLOWED_ORIGINS。`,
+    });
     return false;
   }
-  if (!hasValidAccessToken(req, process.env.INBOX_TOKEN)) {
+
+  // INBOX_TOKEN 是可选的：没配就不要求。
+  // 让终端用户去配服务端环境变量不现实，一要求就等于这个功能用不了。
+  const expected = process.env.INBOX_TOKEN;
+  if (expected && !hasValidAccessToken(req, expected)) {
     res.status(401).json({ error: "inbox_unauthorized" });
     return false;
   }

@@ -10,6 +10,15 @@ export interface SpokenOptimizationResult {
   phrases: PhraseItem[];
   variants?: RegisterVariants;
   redHighlights?: string[];
+  /**
+   * 这条结果有多可信：
+   * - 'exact'：灵感库 / 精确词条命中，或输入本身就是英文。可以当答案学。
+   * - 'topic'：只命中了「主题关键词」规则，句子是按主题模板写死的，
+   *            和原句不是逐句对应 —— 只能当灵感，不能当翻译。
+   *
+   * 词库完全没有这条时，translateSpokenInput 直接返回 null，不再编句子。
+   */
+  confidence?: 'exact' | 'topic';
 }
 
 // 10 Mandatory Categories
@@ -567,256 +576,68 @@ const SEMANTIC_PATTERNS: RulePattern[] = [
 ];
 
 // Helper to translate arbitrary Chinese sentence to a faithful, natural spoken English sentence
-function buildSyntacticTranslation(trimmed: string): SpokenOptimizationResult {
-  // English input handling
-  const isPureEnglish = /^[a-zA-Z0-9\s,.'!?"-]+$/.test(trimmed);
-  if (isPureEnglish) {
-    const natural = trimmed.endsWith('.') || trimmed.endsWith('!') || trimmed.endsWith('?') ? trimmed : `${trimmed}.`;
-    return {
-      original: trimmed,
-      natural,
-      category: '日常家务',
-      tags: ['口语', '交流'],
-      explanation: `• 原始英文表达「${trimmed}」语意通顺自然。\n• 在口语交流中，保持语调抑扬顿挫即可展现地道母语感。`,
-      phrases: [
-        {
-          phrase: 'flow naturally',
-          pos: '短语',
-          meaning: '表达自然流畅',
-          example: 'Keep practicing to make your conversation flow naturally.',
-        },
-      ],
-    };
-  }
-
-  // Determine intent category from keywords
-  let category: CardCategory = '日常家务';
-  let tags = ['表达', '日常'];
-  if (trimmed.includes('职场') || trimmed.includes('工') || trimmed.includes('项目') || trimmed.includes('会') || trimmed.includes('办')) {
-    category = '职场办公';
-    tags = ['职场', '效率', '沟通'];
-  } else if (trimmed.includes('AI') || trimmed.includes('网') || trimmed.includes('电') || trimmed.includes('机') || trimmed.includes('数码') || trimmed.includes('科技')) {
-    category = '科技生活';
-    tags = ['科技', '数码', '智能'];
-  } else if (trimmed.includes('吃') || trimmed.includes('饭') || trimmed.includes('茶') || trimmed.includes('菜') || trimmed.includes('餐')) {
-    category = '饮食健康';
-    tags = ['就餐', '美食', '健康'];
-  } else if (trimmed.includes('学') || trimmed.includes('考') || trimmed.includes('读') || trimmed.includes('书') || trimmed.includes('英')) {
-    category = '学习提升';
-    tags = ['学习', '进阶', '成长'];
-  } else if (trimmed.includes('心情') || trimmed.includes('累') || trimmed.includes('开心') || trimmed.includes('难过') || trimmed.includes('心')) {
-    category = '情感表达';
-    tags = ['心情', '感受', '共鸣'];
-  } else if (trimmed.includes('买') || trimmed.includes('钱') || trimmed.includes('单') || trimmed.includes('购') || trimmed.includes('折')) {
-    category = '购物消费';
-    tags = ['消费', '购物', '买单'];
-  } else if (trimmed.includes('游') || trimmed.includes('玩') || trimmed.includes('车') || trimmed.includes('路') || trimmed.includes('飞')) {
-    category = '出行旅游';
-    tags = ['出行', '旅行', '度假'];
-  } else if (trimmed.includes('友') || trimmed.includes('聊') || trimmed.includes('聚') || trimmed.includes('群') || trimmed.includes('说')) {
-    category = '社交聚会';
-    tags = ['社交', '聚会', '交流'];
-  }
-
-  // Construct faithful translation based on clause components
-  let natural = '';
-  let phraseItem = {
-    phrase: 'get it sorted',
-    pos: '动词短语',
-    meaning: '处理好、解决妥当',
-    example: "Don't worry, we'll get it sorted in no time.",
-  };
-
-  if (
-    trimmed.includes('餐厅') ||
-    trimmed.includes('味道') ||
-    trimmed.includes('味蕾') ||
-    trimmed.includes('惊艳') ||
-    trimmed.includes('好吃') ||
-    trimmed.includes('美味') ||
-    trimmed.includes('菜') ||
-    trimmed.includes('绝了') ||
-    trimmed.includes('美食')
-  ) {
-    if (trimmed.includes('绝了') || trimmed.includes('惊艳') || trimmed.includes('味蕾')) {
-      natural = "This place slaps; the flavors are absolutely mind-blowing.";
-      category = '饮食健康';
-      tags = ['美食', '评价'];
-      phraseItem = {
-        phrase: 'slaps',
-        pos: '口语俚语',
-        meaning: '绝了、极好（常用于食物或音乐）',
-        example: 'This place slaps; the flavors are absolutely mind-blowing.',
-      };
-    } else {
-      natural = "The food here really hits the spot; every dish is delicious.";
-      category = '饮食健康';
-      tags = ['美食', '就餐'];
-      phraseItem = {
-        phrase: 'hit the spot',
-        pos: '动词短语',
-        meaning: '正合胃口、恰到好处',
-        example: 'That hot meal really hit the spot after a long day.',
-      };
-    }
-  } else if (trimmed.includes('电') || trimmed.includes('充')) {
-    natural = "I need to plug my phone in real quick before it dies.";
-    category = '科技生活';
-    tags = ['数码', '充电', '手机'];
-    phraseItem = {
-      phrase: 'plug in',
-      pos: '动词短语',
-      meaning: '接通电源充电',
-      example: 'Could I borrow your charger to plug my phone in?',
-    };
-  } else if (trimmed.includes('忙') || trimmed.includes('加班') || trimmed.includes('脚不沾地') || trimmed.includes('开会') || trimmed.includes('项目')) {
-    natural = "I'm completely swamped at the moment; let's circle back to this later.";
-    category = '职场办公';
-    tags = ['职场', '效率'];
-    phraseItem = {
-      phrase: 'swamped',
-      pos: '形容词',
-      meaning: '忙得不可开交、事务缠身',
-      example: "I'm swamped with deadlines this week.",
-    };
-  } else if (trimmed.includes('摆烂') || trimmed.includes('躺平') || trimmed.includes('哪儿也不想去') || trimmed.includes('宅家')) {
-    natural = "I'm just gonna stay home and recharge; not really feeling like going out.";
-    category = '日常家务';
-    tags = ['生活', '放松'];
-    phraseItem = {
-      phrase: 'recharge',
-      pos: '动词',
-      meaning: '放空充电、休养生息',
-      example: 'I need this weekend to just unplug and recharge.',
-    };
-  } else if (trimmed.includes('累') || trimmed.includes('心累') || trimmed.includes('精疲力尽')) {
-    natural = "I'm seriously exhausted; today has been utterly draining.";
-    category = '情感表达';
-    tags = ['心情', '感受'];
-    phraseItem = {
-      phrase: 'draining',
-      pos: '形容词',
-      meaning: '耗尽心力的、让人筋疲力竭的',
-      example: 'Dealing with that issue was so mentally draining.',
-    };
-  } else if (trimmed.includes('开心') || trimmed.includes('太棒') || trimmed.includes('激动') || trimmed.includes('兴奋')) {
-    natural = "I'm absolutely thrilled about this; it totally made my day!";
-    category = '情感表达';
-    tags = ['心情', '喜悦'];
-    phraseItem = {
-      phrase: 'make someone\'s day',
-      pos: '口语短语',
-      meaning: '让某人开心一整天',
-      example: 'Your compliment completely made my day.',
-    };
-  } else if (trimmed.includes('打折') || trimmed.includes('省钱') || trimmed.includes('剁手') || trimmed.includes('没忍住') || trimmed.includes('买单')) {
-    natural = "I was trying to be mindful with my spending, but I caved when I saw the deal.";
-    category = '购物消费';
-    tags = ['购物', '消费'];
-    phraseItem = {
-      phrase: 'cave in',
-      pos: '动词短语',
-      meaning: '屈服于诱惑、没忍住',
-      example: 'I tried to stick to my budget, but I caved in.',
-    };
-  } else if (trimmed.includes('旅游') || trimmed.includes('风景') || trimmed.includes('避世') || trimmed.includes('度假') || trimmed.includes('景点')) {
-    natural = "This place is a true hidden sanctuary; the scenery is breathtaking.";
-    category = '出行旅游';
-    tags = ['旅行', '风景'];
-    phraseItem = {
-      phrase: 'hidden sanctuary',
-      pos: '名词短语',
-      meaning: '避世秘境、世外桃源',
-      example: 'This quiet valley is a true hidden sanctuary.',
-    };
-  } else if (trimmed.startsWith('我想') || trimmed.startsWith('我打算') || trimmed.startsWith('我希望')) {
-    natural = "I'm really hoping to get this sorted out as soon as possible.";
-    phraseItem = {
-      phrase: 'sort out',
-      pos: '动词短语',
-      meaning: '梳理明白、解决妥当',
-      example: "Let's sort this out together.",
-    };
-  } else if (trimmed.startsWith('你觉得') || trimmed.startsWith('你认为')) {
-    natural = "What's your take on this? I'd love to hear your thoughts.";
-    phraseItem = {
-      phrase: "what's your take",
-      pos: '口语短语',
-      meaning: '你怎么看、你对此何见解',
-      example: "What's your take on the latest announcement?",
-    };
-  } else if (trimmed.startsWith('为什么') || trimmed.startsWith('怎么')) {
-    natural = "How come this is happening? It doesn't really add up.";
-    phraseItem = {
-      phrase: 'add up',
-      pos: '短语',
-      meaning: '说得通、符合逻辑',
-      example: "Their explanation just doesn't add up.",
-    };
-  } else if (trimmed.includes('可以') || trimmed.includes('能帮')) {
-    natural = "Could you give me a quick hand with this when you have a second?";
-    phraseItem = {
-      phrase: 'give someone a hand',
-      pos: '短语',
-      meaning: '搭把手、帮个忙',
-      example: 'Could you give me a hand moving this desk?',
-    };
-  } else if (trimmed.includes('没关系') || trimmed.includes('不要紧') || trimmed.includes('没事')) {
-    natural = "No worries at all, it's really not that big of a deal.";
-    phraseItem = {
-      phrase: 'not a big deal',
-      pos: '短语',
-      meaning: '没什么大不了、无伤大雅',
-      example: "Don't stress over it, it's not a big deal.",
-    };
-  } else {
-    natural = "Let's make sure we approach this with the right perspective.";
-    phraseItem = {
-      phrase: 'right perspective',
-      pos: '名词短语',
-      meaning: '正确的视角、得当的心态',
-      example: 'Having the right perspective makes all the difference.',
-    };
-  }
-
+/**
+ * 纯英文输入的「回显」处理：补上句号，给一条通用解析。
+ *
+ * 中文输入不走这里 —— 见 translateSpokenInput 第 5 步。
+ * 原先这个函数的下半段是一条 trimmed.includes(...) 的 if-else 链，
+ * 无论输入什么中文都会硬塞一句写死的英文；完全没命中时会落进最后那个
+ * 无条件 else，返回一句和输入毫无关系的句子。那不是在翻译，是在编，
+ * 而用户会把它当成目标句去背。所以那一段整段删掉了。
+ */
+function buildEnglishEchoResult(trimmed: string): SpokenOptimizationResult {
+  const natural = /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
   return {
     original: trimmed,
     natural,
-    category,
-    tags: sanitizeTwoCharNounTags(tags),
-    explanation: `• 针对「${trimmed}」，地道口语着重强调语气节奏与母语场景感。\n• 表达贴合真实语境，词句自然生动。`,
-    phrases: [phraseItem],
+    category: '日常家务',
+    tags: ['口语', '交流'],
+    explanation: `• 原始英文表达「${trimmed}」语意通顺自然。\n• 在口语交流中，保持语调抑扬顿挫即可展现地道母语感。`,
+    phrases: [
+      {
+        phrase: 'flow naturally',
+        pos: '短语',
+        meaning: '表达自然流畅',
+        example: 'Keep practicing to make your conversation flow naturally.',
+      },
+    ],
+    confidence: 'exact',
   };
 }
 
 // Generate complete authentic translation result for any input
-export function translateSpokenInput(input: string): SpokenOptimizationResult {
+/** 纯英文输入（允许数字与常见标点）：本身就是可用答案，不需要翻译。 */
+function isPureEnglishText(text: string): boolean {
+  return /^[a-zA-Z0-9\s,.'!?"-]+$/.test(text);
+}
+
+/**
+ * 离线兜底：把中文口语映射成地道英文表达。
+ *
+ * 返回 null = 「词库真的没有这条」，调用方必须如实告诉用户，
+ * 不要再拿一句无关的英文顶上。
+ *
+ * 这条路径以前最后会走 buildSyntacticTranslation 里那条 includes() 宽匹配链，
+ * 实测输入「周末想去爬山」会拿到 "Let's make sure we approach this with the
+ * right perspective." —— 和输入毫无关系，用户却会把它当成目标句去背。
+ */
+export function translateSpokenInput(input: string): SpokenOptimizationResult | null {
   const trimmed = input.trim();
-  if (!trimmed) {
+
+  // 空输入就是没答案。原先这里会返回 "I've got this covered."（承揽任务），
+  // 和用户没输入这件事毫无关系。
+  if (!trimmed) return null;
+
+  // 1. 灵感库命中 —— 高置信，可以当答案学
+  const inspirationMatch = findInspirationMatch(trimmed);
+  if (inspirationMatch) {
     return {
-      original: input,
-      natural: "I've got this covered.",
-      category: '职场办公',
-      tags: ['承揽', '职场'],
-      explanation: '• 针对日常承接任务，母语者常用「I\'ve got this covered」表达可靠与担当。\n• 适用于职场协作与日常闲聊。',
-      phrases: [
-        {
-          phrase: 'got this covered',
-          pos: '短语',
-          meaning: '胸有成竹、包在我身上',
-          example: "Don't stress, I've got this covered.",
-        },
-      ],
+      ...inspirationToOptimizationResult(inspirationMatch, trimmed),
+      confidence: 'exact',
     };
   }
 
-  // 0. High-confidence authentic inspiration library match
-  const inspirationMatch = findInspirationMatch(trimmed);
-  if (inspirationMatch) {
-    return inspirationToOptimizationResult(inspirationMatch, trimmed);
-  }
-
-  // 1. Exact match with dictionary keywords (Strict equality check to prevent false positives)
+  // 2. 精确词条命中（严格相等，不会误伤）—— 高置信
   const matchedEntry = SPOKEN_EXPRESSIONS_DICT.find((entry) =>
     entry.exactKeywords.some((kw) => trimmed === kw || trimmed === `${kw}。` || trimmed === `${kw}！` || trimmed === `${kw}？`)
   );
@@ -829,16 +650,23 @@ export function translateSpokenInput(input: string): SpokenOptimizationResult {
       tags: sanitizeTwoCharNounTags(matchedEntry.tags),
       explanation: matchedEntry.explanation,
       phrases: [matchedEntry.phrase],
+      confidence: 'exact',
     };
   }
 
-  // 2. High-precision semantic pattern rule matching
+  // 3. 输入本身就是英文：原样回显（补个句号）就是可用答案 —— 高置信
+  if (isPureEnglishText(trimmed)) {
+    return buildEnglishEchoResult(trimmed);
+  }
+
+  // 4. 主题规则命中：给的是「这个主题下的一句真地道表达」，
+  //    不是「你这句话的翻译」。标成 'topic'，由上层如实说明。
   for (const pattern of SEMANTIC_PATTERNS) {
     if (pattern.matcher(trimmed)) {
-      return pattern.generate(trimmed);
+      return { ...pattern.generate(trimmed), confidence: 'topic' };
     }
   }
 
-  // 3. Fallback to syntactic translation builder
-  return buildSyntacticTranslation(trimmed);
+  // 5. 词库确实没有这条 —— 如实返回 null，不编句子。
+  return null;
 }

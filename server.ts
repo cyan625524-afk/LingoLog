@@ -8,6 +8,7 @@ import { findInspirationMatch, inspirationToOptimizationResult } from "./src/dat
 import { detectCategory, detectDefaultTags as detectTags } from "./src/utils/categoryMatcher";
 import { pickCoreHighlights } from "./src/utils/highlightPicker";
 import { getPreset, DEFAULT_PROVIDER_ID } from "./src/data/providers";
+import { serveEdgeTts } from "./src/server/edgeTts";
 
 dotenv.config();
 
@@ -187,6 +188,24 @@ app.get("/api/inbox", (req, res) => {
   const items = [...inboxQueue];
   inboxQueue = []; // 读取后清空队列
   res.json({ items });
+});
+
+// ── 服务端朗读：手机端唯一能拿到自然发音的路 ──────────────────────────
+//
+// 放在 rateLimiter **之前**是有意的。那个限流器按 IP 算 30 次/分钟，而这条路上
+// 「一句电文 = 一次请求」—— 连着重听几张卡就会被自己的限流器挡住，手机上
+// 表现为「用着用着突然又变回机械音」，且看不出原因。
+// 所以改由 edgeTts.ts 里那条更宽的限流（60/分钟）自己管。
+//
+// 响应逻辑与线上 serverless 入口（api/tts.ts）共用同一个函数，不写第二遍。
+app.get("/api/tts", (req, res) => {
+  const queryString = req.originalUrl.includes("?")
+    ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
+    : "";
+  serveEdgeTts(queryString, req.ip || "unknown", res).catch((err) => {
+    console.error(`[TTS] 未捕获异常: ${redact(err)}`);
+    if (!res.headersSent) res.status(500).json({ error: "tts_route_crashed" });
+  });
 });
 
 // P1 #9: Simple in-memory rate limiting (per-IP, 30 requests per minute)

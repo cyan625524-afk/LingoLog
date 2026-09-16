@@ -63,7 +63,17 @@ export async function verifyApiEngine(input: {
       }),
     });
 
-    const data = await res.json().catch(() => null);
+    // 先取原文再解析。之前是 res.json().catch(() => null)：服务端返回非 JSON
+    // （云平台的错误页、函数崩溃摘要、网关超时页）时 data 直接是 null，
+    // 界面上只剩一个状态码。而「HTTP 500」这四个字既可能是打包失败，
+    // 也可能是入口没配好或冷启动崩溃，修法完全不同 —— 不把原文露出来就没法判断。
+    const rawText = await res.text().catch(() => '');
+    let data: any = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      data = null;
+    }
 
     if (!data || typeof data.ok !== 'boolean') {
       // 走到这里说明不是业务失败，而是服务端本身没答上话。
@@ -81,9 +91,12 @@ export async function verifyApiEngine(input: {
         return { ok: false, message: '请求太频繁，等一分钟再试。' };
       }
       if (res.status >= 500) {
+        const detail = rawText.replace(/\s+/g, ' ').trim().slice(0, 200);
         return {
           ok: false,
-          message: `服务端没响应（HTTP ${res.status}），可能正在重启或已退出。`,
+          message: detail
+            ? `服务端返回 HTTP ${res.status}。服务端原话：${detail}`
+            : `服务端没响应（HTTP ${res.status}），可能正在重启或已退出。可以在浏览器打开 /api/health 看服务端状态。`,
         };
       }
       return { ok: false, message: `服务端返回异常（HTTP ${res.status}），无法完成自检。` };

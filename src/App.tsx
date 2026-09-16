@@ -60,7 +60,7 @@ import {
   formatDate,
   calculateStreakFromHeatmap,
 } from './utils/ebbinghaus';
-import { showBrowserNotification } from './utils/tts';
+import { showBrowserNotification, SPEECH_NOTICE_EVENT, type SpeechNoticeDetail } from './utils/tts';
 import { syncOnBoot } from './utils/sync';
 
 export default function App() {
@@ -126,12 +126,25 @@ export default function App() {
   // Storage Quota Alert State
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
 
+  // 朗读失败提示。过去 tts.ts 所有失败路径都是静默 resolve()，
+  // 手机点了朗读没声音却一句话都没有，用户只能认为按钮坏了。
+  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
+
   useEffect(() => {
     const handleStorageFull = () => {
       setStorageWarning('存储空间不足，无法自动保存新记录。请在「个人中心」及时导出备份并清理旧数据。');
     };
     window.addEventListener('lingolog-storage-full', handleStorageFull);
     return () => window.removeEventListener('lingolog-storage-full', handleStorageFull);
+  }, []);
+
+  useEffect(() => {
+    const handleSpeechNotice = (e: Event) => {
+      const detail = (e as CustomEvent<SpeechNoticeDetail>).detail;
+      if (detail?.message) setSpeechNotice(detail.message);
+    };
+    window.addEventListener(SPEECH_NOTICE_EVENT, handleSpeechNotice);
+    return () => window.removeEventListener(SPEECH_NOTICE_EVENT, handleSpeechNotice);
   }, []);
 
   // Flush writes immediately when window/tab is closing
@@ -609,6 +622,22 @@ export default function App() {
           <button
             onClick={() => setStorageWarning(null)}
             className="px-2 py-1 bg-amber-800 hover:bg-amber-700 text-amber-100 rounded text-xs shrink-0 cursor-pointer"
+          >
+            知晓
+          </button>
+        </div>
+      )}
+
+      {/* 朗读失败提示：手机端最需要这个，因为那里往往既没有英文音色、在线音源也可能被拦 */}
+      {speechNotice && (
+        <div className="mx-auto mt-2 max-w-2xl w-[92%] p-3 bg-red-950/90 border-2 border-red-600/60 text-red-50 rounded-lg shadow-xl flex items-center justify-between gap-3 text-xs z-50">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🔇</span>
+            <span>{speechNotice}</span>
+          </div>
+          <button
+            onClick={() => setSpeechNotice(null)}
+            className="px-2 py-1 bg-red-800 hover:bg-red-700 text-red-50 rounded text-xs shrink-0 cursor-pointer"
           >
             知晓
           </button>

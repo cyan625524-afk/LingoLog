@@ -455,7 +455,11 @@ export const StudyView: React.FC<StudyViewProps> = ({
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert('您的浏览器暂不支持实时语音识别，建议使用 Chrome 或 Edge 浏览器');
+      // 不用 alert：手机上它可能被拦截、或者弹成整屏，关掉之后什么都不剩。
+      // 用页面内的提示，用户还能回头看，也知道该换什么设备。
+      setLoadError(
+        '这台浏览器不提供语音识别，没法在这里跟读打分。想练跟读请用电脑上的 Chrome / Edge，或打开卡片用录音回放对比。'
+      );
       return;
     }
 

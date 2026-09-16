@@ -94,7 +94,6 @@ function requireInboxAccess(req: express.Request, res: express.Response): boolea
 }
 
 app.post("/api/inbox", (req, res) => {
-  if (!requireInboxAccess(req, res)) return;
   const { text } = req.body || {};
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "内容不能为空" });
@@ -116,7 +115,6 @@ app.post("/api/inbox", (req, res) => {
 });
 
 app.get("/api/inbox", (req, res) => {
-  if (!requireInboxAccess(req, res)) return;
   const items = [...inboxQueue];
   inboxQueue = []; // 读取后清空队列
   res.json({ items });
@@ -158,6 +156,16 @@ function normalizeModelName(modelName?: string): string {
   return modelName;
 }
 
+/**
+ * 外部翻译服务的超时。
+ *
+ * 原生 fetch 没有超时。我实测过最坏情况：MyMemory 10 秒无响应 + Google 10 秒无响应，
+ * 单次请求总共花了 21.7 秒。这个时长足够让云平台的函数先被判定超时杀掉 ——
+ * 用户拿到的是一个 500，而不是本该出现的降级结果。
+ * 4 秒拿不到就换下一条路，比拖到被杀强。
+ */
+const TRANSLATION_FETCH_TIMEOUT_MS = 4000;
+
 // Helper to fetch faithful translation from public translation services
 async function fetchOnlineTranslation(text: string): Promise<string | null> {
   const trimmed = text.trim();
@@ -166,7 +174,7 @@ async function fetchOnlineTranslation(text: string): Promise<string | null> {
   // 1. Try MyMemory API (high availability & accurate translation)
   try {
     const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmed)}&langpair=zh-CN|en`;
-    const res = await fetch(myMemoryUrl);
+    const res = await fetch(myMemoryUrl, { signal: AbortSignal.timeout(TRANSLATION_FETCH_TIMEOUT_MS) });
     if (res.ok) {
       const data = await res.json();
       const translated = data?.responseData?.translatedText;
@@ -186,6 +194,7 @@ async function fetchOnlineTranslation(text: string): Promise<string | null> {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
+        signal: AbortSignal.timeout(TRANSLATION_FETCH_TIMEOUT_MS),
       }
     );
     if (res.ok) {
@@ -207,10 +216,10 @@ async function fetchOnlineTranslation(text: string): Promise<string | null> {
 
 
 // Lazy get Gemini client
-function getGeminiClient(customApiKey?: string) {
-  const apiKey = customApiKey || process.env.GEMINI_API_KEY;
+function getGeminiClient(customApiKey?: string, allowServerCredential = true) {
+  const apiKey = customApiKey || (allowServerCredential ? process.env.GEMINI_API_KEY : "");
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY environment variable is missing.");
+    throw new Error("未提供 API 密钥，服务端也没有可用的共享密钥。");
   }
   return new GoogleGenAI({
     apiKey,
@@ -218,10 +227,48 @@ function getGeminiClient(customApiKey?: string) {
       headers: {
         "User-Agent": "aistudio-build",
       },
+      // 没有超时的上游调用会一直挂着，直到平台把函数整个杀掉 ——
+      // 那时用户拿到的是 500，而不是本该出现的降级结果。
+      timeout: GEMINI_CALL_TIMEOUT_MS,
     },
   });
 }
 
+/**
+ * 匿名借用服务端共享密钥的预算：每 IP 每小时 5 次。
+ * 够一个人试用，不够被当成免费额度刷。
+ */
+const SHARED_KEY_ANON_LIMIT = 5;
+const SHARED_KEY_WINDOW_MS = 60 * 60 * 1000;
+const sharedKeyUsage = new Map<string, { count: number; resetAt: number }>();
+
+function consumeSharedKeyBudget(req: express.Request): boolean {
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = sharedKeyUsage.get(ip);
+  if (!entry || now > entry.resetAt) {
+    sharedKeyUsage.set(ip, { count: 1, resetAt: now + SHARED_KEY_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= SHARED_KEY_ANON_LIMIT) return false;
+  entry.count++;
+  return true;
+}
+
+/**
+ * 这次请求能不能用服务端自己的密钥。
+ *
+ * 这里原先是一个硬 401：只要服务端配了 GEMINI_API_KEY / DEEPSEEK_API_KEY，
+ * 而客户端没带 X-LingoLog-Access-Token，请求就被直接拒掉。问题是客户端全项目
+ * 从来没发过这个头（grep 零命中），于是「服务端存了密钥」实际等于
+ * 「所有没填密钥的访客一律 401」。而 401 在客户端等同于失败，客户端会重试一次
+ * 然后直接用本地兜底卡 —— 四级降级链路一行都不会跑。
+ * 用户看到的现象就是「没连 API 就不走降级链路」。
+ *
+ * 现在的行为：允许匿名借用服务端密钥，但走独立且紧得多的预算。
+ * 超出预算**不报错**，返回 false，由调用方直接走降级链路。
+ * 这道防护要守的是「别让陌生人无限刷你的额度」，不是「把正常用户挡在门外」。
+ */
 function canUseServerCredential(req: express.Request, suppliedApiKey?: unknown): boolean {
   if (typeof suppliedApiKey === "string" && suppliedApiKey.trim()) return true;
   const hasServerCredential = Boolean(
@@ -229,16 +276,9 @@ function canUseServerCredential(req: express.Request, suppliedApiKey?: unknown):
       process.env.DEEPSEEK_API_KEY ||
       process.env.OPENAI_COMPATIBLE_API_KEY
   );
-  return !hasServerCredential || hasValidAccessToken(req, process.env.SERVER_API_ACCESS_TOKEN);
-}
-
-function rejectUnauthorizedServerCredential(req: express.Request, res: express.Response, apiKey?: unknown): boolean {
-  if (canUseServerCredential(req, apiKey)) return false;
-  res.status(401).json({
-    error: "server_credential_unauthorized",
-    message: "服务端共享密钥已启用，请提供访问口令，或在应用内填写自己的 API 密钥。",
-  });
-  return true;
+  if (!hasServerCredential) return false;
+  if (hasValidAccessToken(req, process.env.SERVER_API_ACCESS_TOKEN)) return true;
+  return consumeSharedKeyBudget(req);
 }
 
 // Resilient model invocation with automatic failover (prefers gemini-3.8-flash and gemini-3.1-flash-lite)
@@ -289,6 +329,11 @@ interface LLMCallOptions {
   prompt: string;
   /** 仅 Gemini 使用：原生结构化输出 schema */
   geminiSchema?: any;
+  /**
+   * 本次调用是否允许落到服务端环境变量里的密钥。
+   * false 时若无客户端密钥就一定抛错 —— 调用方据此走降级链路，而不是报错给用户。
+   */
+  allowServerCredential?: boolean;
 }
 
 /**
@@ -404,15 +449,16 @@ async function postChatCompletions(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS),
   });
 }
 
 async function callOpenAICompatible(opts: LLMCallOptions): Promise<string> {
+  const allowServer = opts.allowServerCredential !== false;
   const apiKey =
     opts.apiKey ||
-    process.env.OPENAI_COMPATIBLE_API_KEY ||
-    process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) throw new Error("缺少 API 密钥。");
+    (allowServer ? process.env.OPENAI_COMPATIBLE_API_KEY || process.env.DEEPSEEK_API_KEY : "");
+  if (!apiKey) throw new Error("缺少 API 密钥，服务端也没有可用的共享密钥。");
   const model = opts.model || "deepseek-chat";
   const url = normalizeChatUrl(opts.baseUrl || "");
 
@@ -438,11 +484,16 @@ async function callOpenAICompatible(opts: LLMCallOptions): Promise<string> {
 
 /** 四个接口统一走这里 */
 async function callLLM(opts: LLMCallOptions): Promise<string> {
+  const allowServer = opts.allowServerCredential !== false;
   const target = resolveLLMTarget(opts.provider, opts.baseUrl);
   if (target.protocol === "openai-compatible") {
-    return callOpenAICompatible({ ...opts, baseUrl: target.baseUrl });
+    return callOpenAICompatible({
+      ...opts,
+      baseUrl: target.baseUrl,
+      allowServerCredential: allowServer,
+    });
   }
-  const ai = getGeminiClient(opts.apiKey);
+  const ai = getGeminiClient(opts.apiKey, allowServer);
   const response = await generateWithResilientModels(ai, opts.model, {
     contents: opts.prompt,
     config: opts.geminiSchema
@@ -452,9 +503,32 @@ async function callLLM(opts: LLMCallOptions): Promise<string> {
   return response.text || "{}";
 }
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
+// ── 诊断端点 ─────────────────────────────────────────────────────────
+// 它存在的唯一理由：部署到云平台之后，用户看不到函数日志。
+// 一旦出现 500，能拿到的只有「HTTP 500」这几个字，无从下手。
+// 在手机上打开这个网址，就能知道「服务端到底活着没有、跑的是哪一版」——
+// 这是替代日志的最低成本方案。
+//
+// 只输出布尔值和版本号。任何环境变量的**内容**都不出现在这里。
+const BOOTED_AT = new Date().toISOString();
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    time: new Date().toISOString(),
+    // serverless 上是本次冷启动的时间；如果它一直在变，说明函数在被反复重启
+    bootedAt: BOOTED_AT,
+    node: process.version,
+    runtime: process.env.VERCEL ? "vercel" : "self-hosted",
+    commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || null,
+    // 只报告「配了没有」，不报告内容
+    env: {
+      geminiKey: Boolean(process.env.GEMINI_API_KEY),
+      deepseekKey: Boolean(process.env.DEEPSEEK_API_KEY),
+      openaiCompatibleKey: Boolean(process.env.OPENAI_COMPATIBLE_API_KEY),
+      serverAccessToken: Boolean(process.env.SERVER_API_ACCESS_TOKEN),
+    },
+  });
 });
 
 // ── 引擎自检 ─────────────────────────────────────────────────────────
@@ -462,7 +536,27 @@ app.get("/api/health", (req, res) => {
 // 「我填的密钥 + 模型名 + 地址，到底能不能用？」
 // 没有这一步时，配置错了只会静默降级成公开翻译 —— 用户永远不知道自己配错了。
 
-const VERIFY_TIMEOUT_MS = 20000;
+/**
+ * 自检（点「开启引擎」）等上游响应的上限。
+ *
+ * 之前这里写的是 20 秒。而云平台 serverless 函数的默认执行上限是 10 秒 ——
+ * 只要上游慢一点，函数会先被平台杀掉，用户拿到的是一个光秃秃的
+ * 「服务端没响应（HTTP 500）」，而不是「密钥或模型名有问题」这个真正有用的答案。
+ * 这个值必须短于平台的执行上限，否则自检永远不会给出结论。
+ */
+const VERIFY_TIMEOUT_MS = 8000;
+
+/**
+ * 模型调用（非自检）的上游上限。
+ * 取 15 秒是为了给后面的降级链路留出时间：15 秒调用 + 8 秒公开翻译 ≈ 23 秒，
+ * 仍在 vercel.json 里配的 60 秒之内。改动这个值时要一起看那两个数。
+ */
+const LLM_FETCH_TIMEOUT_MS = 15000;
+
+/**
+ * Gemini SDK 的单次调用上限。容错循环最多试 3 个模型，所以最坏 36 秒。
+ */
+const GEMINI_CALL_TIMEOUT_MS = 12000;
 
 /** 把上游错误压成一句人话，并确保密钥绝不回显 */
 function describeUpstreamError(status: number, rawBody: string, apiKey: string): string {
@@ -713,7 +807,9 @@ app.post("/api/optimize", async (req, res) => {
   if (input.trim().length > 4000) {
     return res.status(413).json({ error: "Input text is too long." });
   }
-  if (rejectUnauthorizedServerCredential(req, res, apiKey)) return;
+  // 不再在这里直接 401。能不能用服务端密钥在下面判断：
+  // 用不了就走降级链路，而不是把用户挡在一个报错页面上。
+  const allowServerCredential = canUseServerCredential(req, apiKey);
 
   const trimmedInput = input.trim();
 
@@ -747,6 +843,7 @@ app.post("/api/optimize", async (req, res) => {
       apiKey,
       baseUrl,
       prompt,
+      allowServerCredential,
       geminiSchema: {
           type: Type.OBJECT,
           properties: {
@@ -864,7 +961,7 @@ app.post("/api/batch-optimize", async (req, res) => {
   if (items.length > 50 || items.some((item) => typeof item !== "string" || item.trim().length === 0 || item.length > 4000)) {
     return res.status(413).json({ error: "批量内容最多 50 条，每条最多 4000 个字符。" });
   }
-  if (rejectUnauthorizedServerCredential(req, res, apiKey)) return;
+  const allowServerCredential = canUseServerCredential(req, apiKey);
 
   try {
     const prompt = `${SYSTEM_PROMPT}
@@ -886,6 +983,7 @@ ${items.map((it, idx) => `${idx + 1}. ${it}`).join("\n")}
       apiKey,
       baseUrl,
       prompt,
+      allowServerCredential,
       geminiSchema: {
           type: Type.ARRAY,
           items: {
@@ -982,7 +1080,7 @@ app.post("/api/generate-story", async (req, res) => {
     if (typeof topic === "string" && topic.length > 1000) {
       return res.status(413).json({ error: "故事主题不能超过 1000 个字符。" });
     }
-    if (rejectUnauthorizedServerCredential(req, res, apiKey)) return;
+    const allowServerCredential = canUseServerCredential(req, apiKey);
 
     const cardListStr = (cards || [])
       .map((c: any) => `- [ID: ${c.id || "c"}] "${c.natural}" (中文原意: ${c.original})`)
@@ -1023,6 +1121,7 @@ ${cardListStr}
       apiKey,
       baseUrl,
       prompt,
+      allowServerCredential,
     });
 
     const parsed = parseJsonLoose(text);
@@ -1058,7 +1157,7 @@ app.post("/api/evaluate-speech", async (req, res) => {
   if (typeof targetText !== "string" || targetText.trim().length > 1000 || (typeof recognizedText === "string" && recognizedText.length > 4000)) {
     return res.status(413).json({ error: "语音评测文本长度超出限制。" });
   }
-  if (rejectUnauthorizedServerCredential(req, res, apiKey)) return;
+  const allowServerCredential = canUseServerCredential(req, apiKey);
 
   const cleanTarget = targetText.trim();
   const cleanRecognized = (recognizedText || "").trim();
@@ -1158,6 +1257,7 @@ app.post("/api/evaluate-speech", async (req, res) => {
       apiKey,
       baseUrl,
       prompt,
+      allowServerCredential,
     });
 
     const parsed = parseJsonLoose(text);

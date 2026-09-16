@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.npm-cache/
+dev-dist/
+
+# 密钥永不入库：.env 存服务端密钥，浏览器填的密钥在 localStorage（不落盘）
+.env*
+!.env.example
+
+# 用户导出/导入的备份文件可能含个人数据，别提交
+*备份*.json
+lingolog-backup*.json

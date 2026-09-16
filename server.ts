@@ -94,6 +94,9 @@ function requireInboxAccess(req: express.Request, res: express.Response): boolea
 }
 
 app.post("/api/inbox", (req, res) => {
+  // 原先这里漏了这道门：requireInboxAccess 写好了却没人调用，
+  // 于是「开关关着」和「口令不对」都不生效，接口对全网开放。
+  if (!requireInboxAccess(req, res)) return;
   const { text } = req.body || {};
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "内容不能为空" });
@@ -115,6 +118,8 @@ app.post("/api/inbox", (req, res) => {
 });
 
 app.get("/api/inbox", (req, res) => {
+  // 同 POST：读取会清空队列，没有口令就等于把收件箱交给任何人搬走。
+  if (!requireInboxAccess(req, res)) return;
   const items = [...inboxQueue];
   inboxQueue = []; // 读取后清空队列
   res.json({ items });

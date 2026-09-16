@@ -198,7 +198,10 @@ function speakWithRemoteAudio(cleanText: string): Promise<boolean> {
         cleanText
       )}&type=2`;
       const audio = new Audio(audioUrl);
-      audio.crossOrigin = 'anonymous';
+      // 这里过去有一句 crossOrigin = 'anonymous'。有道的音频响应里**没有任何 CORS 头**
+      // （实测：带 Origin 和不带 Origin 都没有 Access-Control-Allow-Origin），
+      // 一旦要求按 CORS 模式加载，浏览器判定失败直接触发 onerror —— 声音永远不出来。
+      // 不设 crossOrigin 时按普通媒体请求加载，能正常播。不要加回来。
       currentAudio = audio;
 
       audio.onended = () => {
@@ -228,6 +231,42 @@ function speakWithRemoteAudio(cleanText: string): Promise<boolean> {
   });
 }
 
+/**
+ * 音色列表的本地缓存。
+ *
+ * Chrome / Android 上首次调用 getVoices() 往往返回空数组，要等 voiceschanged。
+ * 但那意味着「等」—— 而等待会打断「用户点击 → 发声」的手势链，iOS Safari 和不少
+ * 国产内核会因此拒绝播放。策略改成：缓存最近一次拿到的列表，点击时优先读缓存，
+ * **一次 await 都不做**；只有缓存为空时才退回「先试一遍，失败后再等一次」。
+ */
+let voicesCache: SpeechSynthesisVoice[] = [];
+
+function getVoicesSync(): SpeechSynthesisVoice[] {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return [];
+  try {
+    const v = window.speechSynthesis.getVoices() || [];
+    if (v.length) voicesCache = v;
+  } catch {}
+  return voicesCache;
+}
+
+/** 脚本加载时预热一次，并跟随 voiceschanged 刷新 —— 让第一次点击就有缓存可用 */
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  try {
+    getVoicesSync();
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      getVoicesSync();
+    });
+  } catch {}
+}
+
+function rankVoices(voices: SpeechSynthesisVoice[]) {
+  return voices
+    .map((v) => ({ v, score: scoreEnglishVoice(v) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+}
+
 export async function speakEnglishText(text: string, rate: number = 0.95): Promise<void> {
   if (typeof window === 'undefined') return;
 
@@ -237,12 +276,13 @@ export async function speakEnglishText(text: string, rate: number = 0.95): Promi
   const cleanText = (text || '').replace(/[*_~`]/g, '').trim();
   if (!cleanText) return;
 
-  const voices = await resolveVoices();
-  const ranked = voices
-    .map((v) => ({ v, score: scoreEnglishVoice(v) }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score);
+  const synth = window.speechSynthesis;
 
+  // 上面几行到这里是同步的，**一个 await 都没有** —— 所以后面第一次 speak()/play()
+  // 仍然落在「用户点击」的同步调用栈里。过去这里先 await resolveVoices()（最多 600ms），
+  // 手势链直接断掉，国产内核因此拒绝播放：这是「手机上再也不出声」的主因之一。
+  const voices = getVoicesSync();
+  const ranked = rankVoices(voices);
   const best = ranked[0]?.v;
   const hasGoodVoice = Boolean(ranked[0] && ranked[0].score >= GOOD_VOICE_SCORE);
 
@@ -257,27 +297,39 @@ export async function speakEnglishText(text: string, rate: number = 0.95): Promi
     return;
   }
 
-  // 路线二：没有像样的音色（国产浏览器常见，往往只有中文音色）—— 用在线真人音源。
+  // 路线二：没有像样的英文音色（国产浏览器常见，往往只带中文音色）—— 用在线真人音源。
   if (cleanText.length <= 300) {
     const ok = await speakWithRemoteAudio(cleanText);
     if (ok) return;
   }
 
-  // 路线三：在线音源也没成，手里还剩什么就用什么（哪怕机械）
+  // 路线三：在线音源也没成，用手里还剩下的音色（哪怕机械）
   if (best) {
     const ok = await speakWithBrowserVoice(cleanText, rate, best);
     if (ok) return;
   }
 
+  // 路线四：音色列表这次是空的（首次加载、getVoices 还没就绪）。等 voiceschanged
+  // 之后用真正拿到的音色再试一次。这时手势链已经断了，但「晚一点出声」明显好过
+  // 「彻底不出声」，而且只有路线一~三全失败才会走到这里。
+  if (synth && voices.length === 0) {
+    const lateRanked = rankVoices(await resolveVoices());
+    const lateBest = lateRanked[0]?.v;
+    const ok = await speakWithBrowserVoice(cleanText, rate, lateBest);
+    if (ok) return;
+    // 注意：lateBest 可能为空 —— 这时 speakWithBrowserVoice 会用浏览器默认音色播放。
+    // 机械，但至少出声，用户能判断出「功能是活的，只是这台设备没有好音色」。
+  }
+
   // 一条路都没有：如实说明，不要静默失败
-  if (typeof window !== 'undefined' && !window.speechSynthesis) {
+  if (!synth) {
     notify(
-      '这台浏览器既不支持语音朗读，也没能播放在线音源。换成 Chrome 或 Edge 打开就能正常读。',
+      '这台浏览器既不支持语音朗读，也没能播放在线的真人音源。换成 Chrome 或 Edge 打开就能正常读。',
       'unsupported'
     );
   } else {
     notify(
-      '朗读失败：这台设备上没有可用的英文音色，在线音源也没能连上。可以换成 Chrome 或 Edge 试试。'
+      '朗读失败：这台设备上没有可用的英文音色，在线真人音源也没能连上。可以换成 Chrome 或 Edge 试试。'
     );
   }
 }

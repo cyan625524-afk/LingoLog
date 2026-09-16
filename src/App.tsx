@@ -612,9 +612,11 @@ export default function App() {
       {/* Offline Status Bar indicator */}
       <OfflineIndicator />
 
-      {/* Storage Quota Alert Banner */}
+      {/* Storage Quota Alert Banner。
+          用 fixed 而不是文档流顶端：手机用户是往下滚着看内容的，
+          插在文档顶部的提示会落在视口之外，等于没提示。 */}
       {storageWarning && (
-        <div className="mx-auto mt-2 max-w-2xl w-[92%] p-3 bg-amber-950/90 border-2 border-amber-600/60 text-amber-100 rounded-lg shadow-xl flex items-center justify-between gap-3 text-xs z-50">
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[95] max-w-2xl w-[92%] p-3 bg-amber-950/95 border-2 border-amber-600/60 text-amber-100 rounded-lg shadow-xl flex items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
             <span className="text-base">⚠️</span>
             <span>{storageWarning}</span>
@@ -628,9 +630,12 @@ export default function App() {
         </div>
       )}
 
-      {/* 朗读失败提示：手机端最需要这个，因为那里往往既没有英文音色、在线音源也可能被拦 */}
+      {/* 朗读失败提示：手机端最需要这个，因为那里往往既没有英文音色、在线音源也可能被拦。
+          必须 fixed 浮在视口顶部。放在文档流顶端时，手机用户是往下滚着看卡片的，
+          提示会落在视口之外 —— 过去「点了朗读连红字都没有」就是这么来的：
+          元素渲染了，但没人看得见。 */}
       {speechNotice && (
-        <div className="mx-auto mt-2 max-w-2xl w-[92%] p-3 bg-red-950/90 border-2 border-red-600/60 text-red-50 rounded-lg shadow-xl flex items-center justify-between gap-3 text-xs z-50">
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] max-w-2xl w-[92%] p-3 bg-red-950/95 border-2 border-red-600/60 text-red-50 rounded-lg shadow-xl flex items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
             <span className="text-base">🔇</span>
             <span>{speechNotice}</span>

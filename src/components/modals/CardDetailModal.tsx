@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Star,
@@ -17,7 +17,6 @@ import {
   History,
   TrendingUp,
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
 import { FlashCard, SpeechRecord } from '../../types';
 import { sound } from '../../utils/audio';
 import { speakEnglishText } from '../../utils/tts';
@@ -58,20 +57,21 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
     return getCardChronologicalMap(allCards);
   }, [allCards]);
 
-  // In-modal speech practice state
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedSpokenText, setRecordedSpokenText] = useState<string | null>(null);
-  const [speechScore, setSpeechScore] = useState<number | null>(null);
-  const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
-  const recognitionRef = useRef<any>(null);
+  // 跟读评测统一走 SpeechPracticeModal。
+  // 这里过去有一整套自己的语音识别 + 打分实现 —— 那是全项目第三份重复实现，
+  // 也正是「手机上点了麦克风不显示在录制、也不报错」的那一份：
+  // 它的 recognition.onerror 只有一句 console.warn，界面一个字都不显示。
+  // 一个功能三套实现必然漂移，所以这里只留一个入口。
 
   useEffect(() => {
-    setRecordedSpokenText(null);
-    setSpeechScore(null);
-    setSpeechFeedback(null);
     setSelectedVariant('neutral');
     setUserNote(card?.userNotes || '');
+    setVoiceEntryNotice(null);
   }, [card]);
+
+  /** 跟读入口没接通时的兜底提示。理论上不会触发（App 总是传 onOpenSpeechPractice），
+   *  但绝不留静默失败 —— 「点了没反应」正是这一轮要消灭的那类 bug。 */
+  const [voiceEntryNotice, setVoiceEntryNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -113,82 +113,18 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
     }
   };
 
-  // Quick Speech Evaluation using Web Speech API
-  const handleToggleVoicePractice = () => {
-    if (isRecording) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      setIsRecording(false);
+  // 跟读评测统一入口：交给 SpeechPracticeModal。它同时支持语音识别与纯录音回放，
+  // 并且每一种失败（没有识别能力 / 麦克风没响应 / 权限被拒）都有界面提示。
+  // 过去这里自己实现了一套，onerror 只写 console.warn —— 用户点了没反应也没提示，
+  // 正是手机上「点了不显示在录制」的那一份。三套实现必然漂移，只留这一个入口。
+  const handleOpenVoicePractice = () => {
+    sound.playKeyClick();
+    if (onOpenSpeechPractice) {
+      onOpenSpeechPractice(card);
+      onClose();
       return;
     }
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      if (onOpenSpeechPractice) {
-        onOpenSpeechPractice(card);
-      } else {
-        alert('当前浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器。');
-      }
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US';
-      recognition.continuous = false;
-      recognition.interimResults = false;
-
-      recognition.onstart = () => {
-        setIsRecording(true);
-        sound.playKeyClick();
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setRecordedSpokenText(transcript);
-
-        // Simple similarity scoring
-        const targetWords = card.natural.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/);
-        const spokenWords = transcript.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/);
-        let matchCount = 0;
-        targetWords.forEach((w: string) => {
-          if (spokenWords.includes(w)) matchCount++;
-        });
-
-        const score = Math.round((matchCount / Math.max(1, targetWords.length)) * 100);
-        setSpeechScore(score);
-
-        if (score >= 80) {
-          setSpeechFeedback('🎉 发音非常地道，节奏与用词精准！');
-          confetti({ particleCount: 30, spread: 50 });
-          sound.playSuccess();
-        } else if (score >= 50) {
-          setSpeechFeedback('👍 大致准确，注意个别连读与重音。');
-          sound.playKeyClick();
-        } else {
-          setSpeechFeedback('💪 继续多听几遍母语发音再试一次！');
-          sound.playKeyClick();
-        }
-      };
-
-      recognition.onerror = (e: any) => {
-        console.warn('Speech err', e);
-        setIsRecording(false);
-      };
-
-      recognition.onend = () => {
-        setIsRecording(false);
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (e) {
-      console.warn('Speech error', e);
-      setIsRecording(false);
-    }
+    setVoiceEntryNotice('跟读评测入口未接通，请刷新页面后重试。');
   };
 
   const nextReviewText = formatNextReviewHuman(card.nextReviewAt);
@@ -404,47 +340,29 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                 </div>
               )}
 
-              {/* Quick Voice Evaluation Box */}
+              {/* 跟读评测入口。真正的录音与评测在 SpeechPracticeModal 里，
+                  那里对「本机没有语音识别能力」「麦克风没响应」「权限被拒」
+                  都会给出界面提示；没有识别能力时只给录音回放对比，绝不编分数。 */}
               <div className="space-y-2.5">
                 <div className="text-xs font-serif-display font-bold text-stone-800 flex items-center justify-between">
-                  <span>🎙️ 快速口语跟读评测</span>
-                  {speechScore !== null && (
-                    <span className="text-xs font-mono font-bold text-[#d49e3d]">
-                      即时契合度: {speechScore}%
-                    </span>
-                  )}
+                  <span>🎙️ 口语跟读评测</span>
                 </div>
 
                 <div className="p-3.5 sm:p-4 bg-[#faf7ee] rounded-xs border-2 border-stone-900 flex flex-col items-center justify-center text-center space-y-2.5 shadow-xs">
                   <p className="text-xs text-stone-600 font-serif">
-                    {isRecording
-                      ? '正在聆听... 请大声念出上面的英伦地道电文'
-                      : '点击麦克风快速录音，即刻检验发音连读'}
+                    点麦克风开始录音跟读。本机不支持语音识别时会明确告诉你，只保留录音回放对比。
                   </p>
 
+                  {voiceEntryNotice && (
+                    <p className="text-[11px] text-[#99332e] font-bold">{voiceEntryNotice}</p>
+                  )}
+
                   <button
-                    onClick={handleToggleVoicePractice}
-                    className={`w-12 h-12 rounded-full flex items-center justify-center border-2 border-stone-900 shadow-[2px_2px_0px_#101711] transition-all cursor-pointer ${
-                      isRecording
-                        ? 'bg-[#99332e] text-white animate-pulse'
-                        : 'bg-[#d49e3d] hover:bg-[#c99333] text-stone-900 active:scale-95'
-                    }`}
+                    onClick={handleOpenVoicePractice}
+                    className="w-12 h-12 rounded-full flex items-center justify-center border-2 border-stone-900 shadow-[2px_2px_0px_#101711] transition-all cursor-pointer bg-[#d49e3d] hover:bg-[#c99333] text-stone-900 active:scale-95"
                   >
                     <Mic className="w-5 h-5" />
                   </button>
-
-                  {recordedSpokenText && (
-                    <div className="w-full text-xs p-2.5 bg-white rounded-xs border border-stone-400 space-y-1 text-left">
-                      <div className="font-mono text-stone-500 text-[11px]">
-                        识别结果: "{recordedSpokenText}"
-                      </div>
-                      {speechFeedback && (
-                        <div className="font-bold text-stone-900 text-xs font-serif">
-                          {speechFeedback}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

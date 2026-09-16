@@ -373,6 +373,9 @@ export const StudyView: React.FC<StudyViewProps> = ({
 
     let attempt = 0;
     let cardSuccess = false;
+    // 是否真的产出了一张卡（无论来自模型还是离线库）。进度条的最终播报看它，
+    // 不看 cardSuccess —— 离线库命中时 cardSuccess 仍是 false，但卡是有的。
+    let producedCard = false;
 
     while (attempt < 2 && !cardSuccess) {
       attempt++;
@@ -423,6 +426,7 @@ export const StudyView: React.FC<StudyViewProps> = ({
             sound.playCarriageReturn();
             sound.playMorseSidetone('ack');
             setGeneratedCard(newCard);
+            producedCard = true;
             setIsMobileCardModalOpen(true);
             if (result.isOfflineFallback) {
               setLoadError('电报局专线繁忙，已自动启用离线地道语料库为你拍发并解析电文。');
@@ -442,6 +446,7 @@ export const StudyView: React.FC<StudyViewProps> = ({
         sound.playCarriageReturn();
         sound.playMorseSidetone('ack');
         setGeneratedCard(fallbackCard);
+        producedCard = true;
         setIsMobileCardModalOpen(true);
         setLoadError('电报局专线繁忙，已自动启用离线地道语料库为你拍发并解析电文。');
       } else {
@@ -452,15 +457,25 @@ export const StudyView: React.FC<StudyViewProps> = ({
       }
     }
 
-    // Finish punch-tape animation: hit 100% then settle back to idle full tape
+    // Finish punch-tape animation: hit 100% then settle back to idle full tape.
+    // 这里过去无论成败都播报「电文已送达」，连失败都在报好消息 ——
+    // 用户看到的是「进度条一拉满、然后什么都没有」，还判断不出到底成没成。
+    // 成没成必须如实说，失败还要多停一会儿，让人来得及看见。
     if (progressTimerRef.current) {
       clearInterval(progressTimerRef.current);
       progressTimerRef.current = null;
     }
-    onGeneratingStateChange?.(true, 100, '电文已送达');
-    setTimeout(() => {
-      onGeneratingStateChange?.(false, 100, '');
-    }, 700);
+    if (producedCard) {
+      onGeneratingStateChange?.(true, 100, '电文已送达');
+      setTimeout(() => {
+        onGeneratingStateChange?.(false, 100, '');
+      }, 700);
+    } else {
+      onGeneratingStateChange?.(true, 100, '电文未能送达');
+      setTimeout(() => {
+        onGeneratingStateChange?.(false, 100, '');
+      }, 2200);
+    }
 
     setIsLoading(false);
   };
@@ -635,6 +650,27 @@ export const StudyView: React.FC<StudyViewProps> = ({
       className="flex-1 w-full bg-[#182319] pt-5 sm:pt-8 pb-24 md:pb-8 px-4 sm:px-6 flex flex-col items-center justify-start text-stone-100 transition-colors select-none"
       onMouseUp={handleTextMouseUp}
     >
+      {/* 拍发电报 / 跟读的失败提示。
+          这里踩过两个坑，都记在这：
+          1. loadError 原先有 9 处赋值，但 JSX 里 0 处读取 —— 一条只写不读的死通道。
+             「拍发电报失败后页面什么也没有」就是它。
+          2. 就算渲染出来，放在文档流顶端也没用：手机用户是往下滚着看卡片的，
+             提示会落在视口之外，等于没显示。所以这里用 fixed 浮在视口上。 */}
+      {loadError && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[90] w-[92%] max-w-2xl p-3 bg-amber-950/95 border-2 border-amber-500/70 text-amber-50 rounded-lg shadow-xl flex items-start justify-between gap-3 text-xs text-left">
+          <div className="flex items-start gap-2">
+            <span className="text-base shrink-0">📮</span>
+            <span className="leading-relaxed">{loadError}</span>
+          </div>
+          <button
+            onClick={() => setLoadError(null)}
+            className="px-2 py-1 bg-amber-800 hover:bg-amber-700 text-amber-50 rounded text-xs shrink-0 cursor-pointer"
+          >
+            知晓
+          </button>
+        </div>
+      )}
+
       <div className="w-full max-w-5xl flex flex-col items-center">
         {/* 2-Column Dashboard Grid */}
         <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">

@@ -1013,7 +1013,18 @@ app.post("/api/optimize", async (req, res) => {
     }
 
     // 3. Spoken semantic translator
+    // 注意：translateSpokenInput 现在可能返回 null —— 词库确实没有这条表达时它如实返回
+    // null，而不是编一句无关的英文顶上。过去这里紧接着读 fallbackData.redHighlights，
+    // null 解引用直接抛 TypeError，整个请求变成 HTTP 500：这才是「离线时拍发电报报 500」。
     const fallbackData = translateSpokenInput(trimmedInput);
+    if (!fallbackData) {
+      return res.status(200).json({
+        success: false,
+        error: "offline_no_match",
+        message: "离线词库没有收录这条表达。配置 API 密钥后可由模型给出真实翻译。",
+        isOfflineFallback: true,
+      });
+    }
     if (!fallbackData.redHighlights || fallbackData.redHighlights.length === 0) {
       fallbackData.redHighlights = pickCoreHighlights(fallbackData.natural);
     }
@@ -1131,10 +1142,13 @@ ${items.map((it, idx) => `${idx + 1}. ${it}`).join("\n")}
             ],
           };
         }
+        // 可能返回 null（词库确实没有这条）。交给下面的 filter 剔除，
+        // 不要把 null 混进结果数组发给前端 —— 过去直接把 null 当卡片发出去。
         return translateSpokenInput(it);
       })
     );
-    return res.json({ success: true, data: fallbackResults, isOfflineFallback: true });
+    const usableResults = fallbackResults.filter((r) => r !== null);
+    return res.json({ success: true, data: usableResults, isOfflineFallback: true });
   }
 });
 

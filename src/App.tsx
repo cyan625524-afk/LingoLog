@@ -62,6 +62,7 @@ import {
 } from './utils/ebbinghaus';
 import { showBrowserNotification, SPEECH_NOTICE_EVENT, type SpeechNoticeDetail } from './utils/tts';
 import { syncOnBoot } from './utils/sync';
+import { parsePastedMarkdown, createCardsFromDrafts } from './utils/markdownCardParser';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('learn');
@@ -290,6 +291,46 @@ export default function App() {
       };
     });
   }, []);
+
+  // ── 外部助手推送自动同步（来自 Gemini / 油猴脚本等） ──
+  useEffect(() => {
+    let active = true;
+    const checkInbox = async () => {
+      try {
+        const res = await fetch('/api/inbox');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active) return;
+        if (data && Array.isArray(data.items) && data.items.length > 0) {
+          const allNewCards: FlashCard[] = [];
+          for (const item of data.items) {
+            const drafts = parsePastedMarkdown(item.text);
+            if (drafts.length > 0) {
+              const newCards = createCardsFromDrafts(drafts);
+              allNewCards.push(...newCards);
+            }
+          }
+          if (allNewCards.length > 0) {
+            setCards((prev) => [...allNewCards, ...prev]);
+            addFeathers(allNewCards.length * 2);
+            recordActivity('learn', 5);
+            sound.playSuccess();
+          }
+        }
+      } catch {
+        // ignore polling network errors
+      }
+    };
+
+    const interval = setInterval(checkInbox, 3000);
+    window.addEventListener('focus', checkInbox);
+    checkInbox();
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener('focus', checkInbox);
+    };
+  }, [addFeathers, recordActivity]);
 
   // 1. Add Optimized Card
   const handleOptimizedNewCard = (newCard: FlashCard) => {

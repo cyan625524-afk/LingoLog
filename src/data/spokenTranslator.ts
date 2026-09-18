@@ -1,5 +1,7 @@
-import { FlashCard, CardCategory, PhraseItem, RegisterVariants } from '../types';
-import { findInspirationMatch, inspirationToOptimizationResult } from './inspirationData';
+// ⚠️ 本文件在云平台 serverless 的导入链上（server.ts → 这里），相对导入必须带 .js 后缀。
+// Vite / esbuild 会把 "./x.js" 解析回 x.ts，前端构建不受影响。
+import { FlashCard, CardCategory, PhraseItem, RegisterVariants } from '../types.js';
+import { findInspirationMatch, inspirationToOptimizationResult } from './inspirationData.js';
 
 export interface SpokenOptimizationResult {
   original: string;

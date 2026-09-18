@@ -1,4 +1,5 @@
-import { serveEdgeTts } from '../src/server/edgeTts';
+// ⚠️ 相对导入必须带 .js 后缀（原因见 api/health.ts 顶部）。
+import { serveEdgeTts } from '../src/server/edgeTts.js';
 
 /**
  * 云平台 serverless 入口：/api/tts

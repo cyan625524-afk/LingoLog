@@ -1,5 +1,7 @@
-import { FlashCard, PhraseItem, CardCategory } from '../types';
-import { pickCoreHighlights } from '../utils/highlightPicker';
+// ⚠️ 本文件在云平台 serverless 的导入链上（server.ts → 这里），相对导入必须带 .js 后缀。
+// Vite / esbuild 会把 "./x.js" 解析回 x.ts，前端构建不受影响。
+import { FlashCard, PhraseItem, CardCategory } from '../types.js';
+import { pickCoreHighlights } from '../utils/highlightPicker.js';
 
 /**
  * 灵感库条目的重点词。

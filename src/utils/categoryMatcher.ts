@@ -1,4 +1,6 @@
-import { CardCategory, CARD_CATEGORIES } from '../types';
+// ⚠️ 本文件在云平台 serverless 的导入链上（server.ts → 这里），相对导入必须带 .js 后缀。
+// Vite / esbuild 会把 "./x.js" 解析回 x.ts，前端构建不受影响。
+import { CardCategory, CARD_CATEGORIES } from '../types.js';
 
 export const CATEGORY_KEYWORDS: Record<CardCategory, string[]> = {
   '饮食健康': ['餐厅', '味道', '吃饭', '做饭', '美食', '味蕾', '甜点', '美味', '健康', '运动', '养生', '减肥', '早餐', '午餐', '晚餐', '零食', '饮料', '酸奶', '医疗', '身体'],

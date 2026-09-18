@@ -1,4 +1,6 @@
-import app from '../server';
+// ⚠️ 相对导入必须带 .js 后缀（原因见 api/health.ts 顶部）：ESM 不补扩展名，
+// 少了它函数在模块加载阶段就崩，业务逻辑与 try/catch 都来不及执行。
+import app from '../server.js';
 
 /**
  * 云平台 serverless 入口：/api/inbox

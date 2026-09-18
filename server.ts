@@ -3,12 +3,17 @@ import path from "path";
 import dotenv from "dotenv";
 import { isIP } from "node:net";
 import { GoogleGenAI, Type } from "@google/genai";
-import { translateSpokenInput } from "./src/data/spokenTranslator";
-import { findInspirationMatch, inspirationToOptimizationResult } from "./src/data/inspirationData";
-import { detectCategory, detectDefaultTags as detectTags } from "./src/utils/categoryMatcher";
-import { pickCoreHighlights } from "./src/utils/highlightPicker";
-import { getPreset, DEFAULT_PROVIDER_ID } from "./src/data/providers";
-import { serveEdgeTts } from "./src/server/edgeTts";
+// ⚠️ 本站自己的相对导入一律带 .js 后缀。package.json 是 "type": "module"，
+// 云平台函数以 ESM 运行，而 ESM 不做扩展名补全 —— 少一个后缀，整条导入链会在
+// 模块加载阶段报 ERR_MODULE_NOT_FOUND，线上表现为 FUNCTION_INVOCATION_FAILED，
+// 而任何 try/catch 都接不住（此时函数体还没开始执行）。
+// 前端（Vite）与 esbuild 都能把 "./x.js" 解析回 x.ts，所以本地构建不受影响。
+import { translateSpokenInput } from "./src/data/spokenTranslator.js";
+import { findInspirationMatch, inspirationToOptimizationResult } from "./src/data/inspirationData.js";
+import { detectCategory, detectDefaultTags as detectTags } from "./src/utils/categoryMatcher.js";
+import { pickCoreHighlights } from "./src/utils/highlightPicker.js";
+import { getPreset, DEFAULT_PROVIDER_ID } from "./src/data/providers.js";
+import { serveEdgeTts } from "./src/server/edgeTts.js";
 
 dotenv.config();
 

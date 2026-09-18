@@ -1,4 +1,5 @@
-import app from '../server';
+// ⚠️ 相对导入必须带 .js 后缀（原因见 api/health.ts 顶部）。
+import app from '../server.js';
 
 /**
  * 云平台 serverless 入口（catch-all：/api/*）。

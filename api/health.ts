@@ -1,4 +1,8 @@
-import app from '../server';
+// ⚠️ 相对导入必须带 .js 后缀：package.json 是 "type": "module"，云平台以 ESM 运行，
+// 而 ESM 不做扩展名补全。少一个后缀就 ERR_MODULE_NOT_FOUND —— 且发生在模块加载阶段，
+// 下面那个 try/catch 一行都执行不到，线上只表现为 FUNCTION_INVOCATION_FAILED。
+// 改动整条导入链（api/* → server.ts → src/**）时，每一段都要带后缀。
+import app from '../server.js';
 
 /**
  * 云平台 serverless 入口：/api/health

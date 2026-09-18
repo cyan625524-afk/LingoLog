@@ -727,31 +727,14 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                   ref={heatmapScrollRef}
                   className="overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-stone-400 scrollbar-track-transparent"
                 >
-                  <div className="inline-flex flex-col min-w-max select-none">
-                    {/* Month Label Row: Exact week-aligned positioning */}
-                    <div className="flex gap-1 text-[10px] font-mono text-stone-600 dark:text-stone-400 font-bold mb-1.5">
-                      {/* Sticky top-left spacer aligned with frozen weekday column */}
-                      <div className="sticky left-0 z-20 bg-[#f4edd3] dark:bg-[#1a251c] w-6 sm:w-7 shrink-0 pr-1.5 border-r-2 border-transparent" />
+                  <div className="inline-flex min-w-max select-none">
+                    {/* Frozen / Sticky Weekday indicator labels column (Unified vertical gutter) */}
+                    <div className="sticky left-0 z-20 bg-[#f4edd3] dark:bg-[#1a251c] flex flex-col shrink-0 w-6 sm:w-7 pr-1.5 border-r-2 border-stone-900/30 dark:border-stone-700 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)] select-none">
+                      {/* Top spacer matching month label row height + margin */}
+                      <div className="h-5 sm:h-6 mb-2" />
 
-                      {/* 53 Columns of Weeks for precise month label positioning */}
-                      {fullYearWeeks.map((_, wIdx) => {
-                        const month = monthLabels.find((m) => m.weekIndex === wIdx);
-                        return (
-                          <div key={wIdx} className="w-3 sm:w-3.5 shrink-0 relative overflow-visible">
-                            {month && (
-                              <span className="absolute left-0 top-0 whitespace-nowrap text-[10px] font-bold text-stone-700 dark:text-stone-300">
-                                {month.label}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Day-of-week labels + 7-Row Heatmap Grid */}
-                    <div className="flex gap-1">
-                      {/* Frozen / Sticky Weekday indicator labels column */}
-                      <div className="sticky left-0 z-20 bg-[#f4edd3] dark:bg-[#1a251c] flex flex-col gap-1 text-[9px] font-mono text-stone-700 dark:text-stone-300 font-bold w-6 sm:w-7 shrink-0 pr-1.5 border-r-2 border-stone-900/30 dark:border-stone-700 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)] select-none">
+                      {/* 7 Weekday labels aligned perfectly with each cell row */}
+                      <div className="flex flex-col gap-1 text-[9px] font-mono text-stone-700 dark:text-stone-300 font-bold">
                         <span className="h-3 sm:h-3.5 leading-3 sm:leading-3.5 flex items-center justify-end">日</span>
                         <span className="h-3 sm:h-3.5 leading-3 sm:leading-3.5 flex items-center justify-end text-stone-400 dark:text-stone-600 font-normal">一</span>
                         <span className="h-3 sm:h-3.5 leading-3 sm:leading-3.5 flex items-center justify-end">二</span>
@@ -759,6 +742,25 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                         <span className="h-3 sm:h-3.5 leading-3 sm:leading-3.5 flex items-center justify-end">四</span>
                         <span className="h-3 sm:h-3.5 leading-3 sm:leading-3.5 flex items-center justify-end text-stone-400 dark:text-stone-600 font-normal">五</span>
                         <span className="h-3 sm:h-3.5 leading-3 sm:leading-3.5 flex items-center justify-end">六</span>
+                      </div>
+                    </div>
+
+                    {/* Main Scrolling Heatmap Content: Month Headers + 53 Weeks Grid */}
+                    <div className="flex flex-col pl-1.5">
+                      {/* Month Label Row: Exact week-aligned positioning with proper vertical clearance */}
+                      <div className="flex gap-1 text-[10px] font-mono text-stone-600 dark:text-stone-400 font-bold mb-2 h-5 sm:h-6 items-end">
+                        {fullYearWeeks.map((_, wIdx) => {
+                          const month = monthLabels.find((m) => m.weekIndex === wIdx);
+                          return (
+                            <div key={wIdx} className="w-3 sm:w-3.5 shrink-0 relative h-full flex items-end">
+                              {month && (
+                                <span className="absolute left-0 bottom-0.5 whitespace-nowrap text-[10px] font-bold text-stone-700 dark:text-stone-300 pointer-events-none">
+                                  {month.label}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
 
                       {/* 53 Columns of Weeks */}

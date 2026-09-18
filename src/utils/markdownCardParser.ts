@@ -65,11 +65,31 @@ function extractPhrasesAndHighlights(
           .map((m) => m[1].trim())
           .filter((t) => /[a-zA-Z]/.test(t));
 
-        if (headerTerm.includes('同义') || headerTerm.includes('变体') || headerTerm.includes('口语')) {
+        if (headerTerm.includes('书面') || headerTerm.includes('正式')) {
+          const formalText = boldMatches[0] || content.match(/[a-zA-Z][a-zA-Z\s,'.!?-]{3,}/)?.[0]?.trim();
+          if (formalText) {
+            variants = {
+              ...(variants || {}),
+              formal: formalText,
+            };
+            phrases.push({
+              phrase: formalText,
+              pos: '书面表达',
+              meaning:
+                content
+                  .replace(/\*\*[^*]+\*\*/g, '')
+                  .replace(/[，。]/g, ' ')
+                  .trim()
+                  .slice(0, 60) || '书面正规表达',
+              example: naturalText,
+            });
+          }
+        } else if (headerTerm.includes('同义') || headerTerm.includes('变体') || headerTerm.includes('口语')) {
           if (boldMatches.length > 0) {
             variants = {
+              ...(variants || {}),
               casual: boldMatches[0],
-              formal: boldMatches[1] || undefined,
+              formal: variants?.formal || boldMatches[1] || undefined,
             };
             phrases.push({
               phrase: boldMatches[0],

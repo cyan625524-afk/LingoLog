@@ -49,7 +49,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
   onUpdateCard,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [selectedVariant, setSelectedVariant] = useState<'casual' | 'neutral' | 'formal'>('neutral');
+  const [selectedVariant, setSelectedVariant] = useState<'casual' | 'formal'>('casual');
   const [userNote, setUserNote] = useState(card?.userNotes || '');
 
   // Chronological order map (earliest added = No.001)
@@ -64,7 +64,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
   // 一个功能三套实现必然漂移，所以这里只留一个入口。
 
   useEffect(() => {
-    setSelectedVariant('neutral');
+    setSelectedVariant('casual');
     setUserNote(card?.userNotes || '');
     setVoiceEntryNotice(null);
   }, [card]);
@@ -88,11 +88,9 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
   if (!isOpen || !card) return null;
 
   const currentText =
-    selectedVariant === 'casual' && card.variants?.casual
-      ? card.variants.casual
-      : selectedVariant === 'formal' && card.variants?.formal
-      ? card.variants.formal
-      : card.natural;
+    selectedVariant === 'formal'
+      ? (card.variants?.formal || card.formal || card.natural)
+      : (card.natural || card.variants?.casual || card.colloquial || '');
 
   const handleCopy = () => {
     sound.playKeyClick();
@@ -215,37 +213,33 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                       {card.category || '日常社交'}
                     </span>
                   </div>
-                  {card.variants && (
+                  {(card.variants || card.formal) && (
                     <div className="flex items-center gap-1 bg-[#faf7ee] p-0.5 rounded-xs text-[11px] border border-stone-900">
                       <button
-                        onClick={() => setSelectedVariant('casual')}
-                        className={`px-2 py-0.5 rounded-xs cursor-pointer font-serif-display ${
+                        onClick={() => {
+                          sound.playKeyClick();
+                          setSelectedVariant('casual');
+                        }}
+                        className={`px-2.5 py-0.5 rounded-xs cursor-pointer font-serif-display transition-colors ${
                           selectedVariant === 'casual'
                             ? 'bg-[#d49e3d] text-stone-950 font-black'
-                            : 'text-stone-600'
+                            : 'text-stone-600 hover:text-stone-900'
                         }`}
                       >
                         口语
                       </button>
                       <button
-                        onClick={() => setSelectedVariant('neutral')}
-                        className={`px-2 py-0.5 rounded-xs cursor-pointer font-serif-display ${
-                          selectedVariant === 'neutral'
-                            ? 'bg-[#d49e3d] text-stone-950 font-black'
-                            : 'text-stone-600'
-                        }`}
-                      >
-                        中性
-                      </button>
-                      <button
-                        onClick={() => setSelectedVariant('formal')}
-                        className={`px-2 py-0.5 rounded-xs cursor-pointer font-serif-display ${
+                        onClick={() => {
+                          sound.playKeyClick();
+                          setSelectedVariant('formal');
+                        }}
+                        className={`px-2.5 py-0.5 rounded-xs cursor-pointer font-serif-display transition-colors ${
                           selectedVariant === 'formal'
                             ? 'bg-[#d49e3d] text-stone-950 font-black'
-                            : 'text-stone-600'
+                            : 'text-stone-600 hover:text-stone-900'
                         }`}
                       >
-                        机要
+                        书面
                       </button>
                     </div>
                   )}

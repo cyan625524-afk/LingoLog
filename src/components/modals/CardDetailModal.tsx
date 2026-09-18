@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { FlashCard, SpeechRecord } from '../../types';
 import { sound } from '../../utils/audio';
-import { speakEnglishText } from '../../utils/tts';
+import { speakEnglishText, prefetchEnglishText } from '../../utils/tts';
 import { formatNextReviewHuman } from '../../utils/ebbinghaus';
 import { HighlightedText } from '../common/HighlightedText';
 import { MarkdownRenderer } from '../common/MarkdownRenderer';
@@ -67,7 +67,13 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
     setSelectedVariant('casual');
     setUserNote(card?.userNotes || '');
     setVoiceEntryNotice(null);
-  }, [card]);
+    if (isOpen && card) {
+      if (card.natural) prefetchEnglishText(card.natural);
+      if (card.variants?.formal && card.variants.formal !== card.natural) {
+        prefetchEnglishText(card.variants.formal);
+      }
+    }
+  }, [card, isOpen]);
 
   /** 跟读入口没接通时的兜底提示。理论上不会触发（App 总是传 onOpenSpeechPractice），
    *  但绝不留静默失败 —— 「点了没反应」正是这一轮要消灭的那类 bug。 */

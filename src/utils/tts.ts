@@ -284,6 +284,38 @@ function isMobileClient(): boolean {
 }
 
 /**
+ * 静默预热/预加载当前电文的英伦男声音频。
+ * 在卡片展示、弹窗打开时调用，利用用户阅读的 1~2 秒提前在后台获取并缓存在浏览器中。
+ * 当用户点击「朗读电文」时实现 0.05 秒瞬时秒播，彻底避免移动端手势过期被拦截。
+ */
+const prefetchedUrls = new Set<string>();
+
+export function prefetchEnglishText(text: string, rate: number = 0.95): void {
+  if (typeof window === 'undefined') return;
+  const cleanText = (text || '').replace(/[*_~`]/g, '').trim();
+  if (!cleanText || cleanText.length > SERVER_TTS_MAX_TEXT) return;
+
+  const url = `/api/tts?t=${encodeURIComponent(cleanText)}&v=${SERVER_TTS_VOICE}&r=${rate}`;
+  if (prefetchedUrls.has(url)) return;
+  prefetchedUrls.add(url);
+
+  if (prefetchedUrls.size > 100) {
+    const firstKey = prefetchedUrls.values().next().value;
+    if (firstKey) prefetchedUrls.delete(firstKey);
+  }
+
+  try {
+    if ('fetch' in window) {
+      fetch(url, { priority: 'low' as any, cache: 'force-cache' }).catch(() => {});
+    } else {
+      const audio = new Audio();
+      audio.preload = 'auto';
+      audio.src = url;
+    }
+  } catch {}
+}
+
+/**
  * 用服务端合成的 MP3 朗读。
  *
  * 形状和有道那条一样：同步 new Audio + 立刻 play()，让播放调用留在用户点击的
@@ -309,7 +341,9 @@ function speakWithServerTts(cleanText: string, rate: number): Promise<boolean> {
 
     try {
       const url = `/api/tts?t=${encodeURIComponent(cleanText)}&v=${SERVER_TTS_VOICE}&r=${rate}`;
-      const audio = new Audio(url);
+      const audio = new Audio();
+      audio.preload = 'auto';
+      audio.src = url;
       currentAudio = audio;
 
       // 起播之后必须换一道闸门。16 秒是「还没出声」的上限，而一句长电文
@@ -331,7 +365,10 @@ function speakWithServerTts(cleanText: string, rate: number): Promise<boolean> {
       const playPromise = audio.play();
       if (playPromise !== undefined) {
         // 这里失败通常意味着服务端返回了 4xx/5xx（不是音频）。交给回退链路。
-        playPromise.catch(() => finish(false, audio));
+        playPromise.catch((err) => {
+          console.warn('[TTS] audio.play() promise catch:', err);
+          finish(false, audio);
+        });
       }
 
       guard = setTimeout(() => {
@@ -423,9 +460,14 @@ export async function speakEnglishText(text: string, rate: number = 0.95): Promi
     console.warn('[TTS] 服务端发音没拿到，回退到设备自带音色');
   }
 
-  // 路线一：这台设备本来就有像样的英文音色（桌面 Edge、手机 Edge、Chrome 都在这里）
-  // —— 直接用它。不再因为「UA 里写着 Mobile」就把它降级成在线音源。
-  if (hasGoodVoice) {
+  // 路线一：这台设备本来就有像样的英文音色（桌面 Edge、Chrome、iOS Siri 都在这里）
+  // 移动端特别处理：安卓设备上的本地 TTS（如 Google 语音服务/系统拼读）音色粗劣机械，
+  // 只有在确定是高品质音色（如 iOS Siri / 微软 Natural）时才走本地，避免安卓手机的机械音抢跑。
+  const isMobile = isMobileClient();
+  const isGenuineHighQuality =
+    hasGoodVoice && (!isMobile || /natural|siri|online/i.test(best?.name || ''));
+
+  if (isGenuineHighQuality) {
     const ok = await speakWithBrowserVoice(cleanText, rate, best);
     if (ok) return;
     if (token !== speechToken) return;

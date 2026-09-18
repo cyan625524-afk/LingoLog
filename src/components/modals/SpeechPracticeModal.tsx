@@ -14,7 +14,7 @@ import {
 import confetti from 'canvas-confetti';
 import { FlashCard, SpeechEvaluationResult, SpeechWordAnalysis } from '../../types';
 import { sound } from '../../utils/audio';
-import { speakEnglishText } from '../../utils/tts';
+import { speakEnglishText, prefetchEnglishText } from '../../utils/tts';
 import { TelegramStamp } from '../common/TelegramStamp';
 import { SignalLamp } from '../common/SignalLamp';
 
@@ -91,6 +91,9 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
       setRecordedAudioUrl(null);
       setIsPlayingRecorded(false);
       setUseFallbackRecording(false);
+      if (card?.natural) {
+        prefetchEnglishText(card.natural);
+      }
     }
   }, [isOpen, card]);
 

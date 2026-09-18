@@ -82,6 +82,10 @@ const TTS_RATE_LIMIT_WINDOW_MS = 60_000;
 
 const ttsRateMap = new Map<string, { count: number; resetAt: number }>();
 
+/** 内存热缓存：预热或近期合成的音频直接从内存响应（<1ms），避免重复握手等待 */
+const audioMemoryCache = new Map<string, Buffer>();
+const MAX_MEMORY_CACHE_ENTRIES = 200;
+
 function isRateLimited(key: string): boolean {
   const now = Date.now();
   const entry = ttsRateMap.get(key);
@@ -267,6 +271,20 @@ export async function serveEdgeTts(
     });
   }
 
+  const cacheKey = `${params.voice}|${params.rateAttribute}|${params.text}`;
+  const memoryHit = audioMemoryCache.get(cacheKey);
+  if (memoryHit) {
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable, s-maxage=31536000");
+    res.setHeader("Accept-Ranges", "none");
+    res.setHeader("X-TTS-Voice", params.voice);
+    res.setHeader("X-TTS-Attempts", "0 (memory-hit)");
+    res.setHeader("Content-Length", memoryHit.length);
+    res.end(memoryHit);
+    return;
+  }
+
   try {
     const startedAt = Date.now();
     const { audio, attempts } = await synthesize(params);
@@ -275,6 +293,14 @@ export async function serveEdgeTts(
         Date.now() - startedAt
       }ms`
     );
+
+    // 写入内存热缓存（LRU 简单淘汰）
+    if (audioMemoryCache.size >= MAX_MEMORY_CACHE_ENTRIES) {
+      const oldestKey = audioMemoryCache.keys().next().value;
+      if (oldestKey) audioMemoryCache.delete(oldestKey);
+    }
+    audioMemoryCache.set(cacheKey, audio);
+
     res.statusCode = 200;
     res.setHeader("Content-Type", "audio/mpeg");
     // 强缓存 + immutable：同一句电文的地址永远一样，第二次点朗读时

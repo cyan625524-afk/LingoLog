@@ -9,7 +9,7 @@ import {
 import confetti from 'canvas-confetti';
 import { FlashCard, ReviewHistoryEntry, ReviewRating } from '../../types';
 import { sound } from '../../utils/audio';
-import { speakEnglishText } from '../../utils/tts';
+import { speakEnglishText, prefetchEnglishText } from '../../utils/tts';
 import { getCardChronologicalMap, formatCardNumber } from '../../utils/cardOrder';
 import { MarkdownRenderer } from '../common/MarkdownRenderer';
 
@@ -50,6 +50,13 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
       setReviewedCount(0);
     }
   }, [isOpen, cards]);
+
+  // 静默预热当前复习卡片的英伦男声音频
+  useEffect(() => {
+    if (isOpen && cards && cards[currentIndex]?.natural) {
+      prefetchEnglishText(cards[currentIndex].natural);
+    }
+  }, [isOpen, cards, currentIndex]);
 
   // Keyboard navigation shortcuts
   useEffect(() => {

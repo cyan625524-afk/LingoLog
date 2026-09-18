@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { FlashCard, RegisterVariants, InputHistoryItem } from '../../types';
 import { sound } from '../../utils/audio';
-import { speakEnglishText } from '../../utils/tts';
+import { speakEnglishText, prefetchEnglishText } from '../../utils/tts';
 import { MarkdownRenderer } from '../common/MarkdownRenderer';
 import {
   INSPIRATION_DATA,
@@ -81,6 +81,16 @@ export const StudyView: React.FC<StudyViewProps> = ({
       }
     };
   }, []);
+
+  // 静默预热生成电文的英伦男声音频
+  useEffect(() => {
+    if (generatedCard?.natural) {
+      prefetchEnglishText(generatedCard.natural);
+      if (generatedCard.variants?.formal && generatedCard.variants.formal !== generatedCard.natural) {
+        prefetchEnglishText(generatedCard.variants.formal);
+      }
+    }
+  }, [generatedCard]);
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [selectionPos, setSelectionPos] = useState<{ x: number; y: number } | null>(null);
   const [isMobileCardModalOpen, setIsMobileCardModalOpen] = useState(false);

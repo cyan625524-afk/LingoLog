@@ -26,8 +26,15 @@ import { FlashcardReviewModal } from './components/modals/FlashcardReviewModal';
 import { BatchImportModal } from './components/modals/BatchImportModal';
 import { SpeechPracticeModal } from './components/modals/SpeechPracticeModal';
 import { SyncLoginModal } from './components/modals/SyncLoginModal';
+import { SupabaseAuthModal } from './components/modals/SupabaseAuthModal';
 import { CoachMarkTour } from './components/common/CoachMarkTour';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
+import {
+  getCurrentUser,
+  syncCardsWithCloud,
+  uploadSingleCardToCloud,
+  deleteSingleCardFromCloud,
+} from './utils/supabase';
 
 // Utilities
 import {
@@ -98,6 +105,7 @@ export default function App() {
   const [isSpeechPracticeOpen, setIsSpeechPracticeOpen] = useState(false);
   const [speechTargetCard, setSpeechTargetCard] = useState<FlashCard | null>(null);
   const [isSyncLoginModalOpen, setIsSyncLoginModalOpen] = useState(false);
+  const [isSupabaseAuthOpen, setIsSupabaseAuthOpen] = useState(false);
 
   // Card Generation Progress for Top Header Punch Tape
   const [isGeneratingCard, setIsGeneratingCard] = useState(false);
@@ -312,6 +320,7 @@ export default function App() {
           }
           if (allNewCards.length > 0) {
             setCards((prev) => [...allNewCards, ...prev]);
+            allNewCards.forEach((c) => uploadSingleCardToCloud(c));
             addFeathers(allNewCards.length * 2);
             recordActivity('learn', 5);
             sound.playSuccess();
@@ -332,9 +341,40 @@ export default function App() {
     };
   }, [addFeathers, recordActivity]);
 
+  // ── Supabase 用户状态检测与自动多端合并 ──
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const user = await getCurrentUser();
+        if (user && mounted) {
+          setUserProfile((prev) => {
+            const next = {
+              ...prev,
+              isLoggedIn: true,
+              name: user.email ? user.email.split('@')[0] : prev.name,
+            };
+            saveUserProfile(next);
+            return next;
+          });
+          const stats = await syncCardsWithCloud(cards);
+          if (stats && mounted && stats.pulledCount > 0) {
+            setCards(stats.mergedCards);
+          }
+        }
+      } catch {
+        // ignore background sync errors
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // 1. Add Optimized Card
   const handleOptimizedNewCard = (newCard: FlashCard) => {
     setCards((prev) => [newCard, ...prev]);
+    uploadSingleCardToCloud(newCard);
     addFeathers(5);
     recordActivity('learn', 3);
 
@@ -446,6 +486,7 @@ export default function App() {
   // 5. Delete Card
   const handleDeleteCard = (cardId: string) => {
     setCards((prev) => prev.filter((c) => c.id !== cardId));
+    deleteSingleCardFromCloud(cardId);
     if (selectedCardForDetail?.id === cardId) {
       setSelectedCardForDetail(null);
     }
@@ -455,6 +496,7 @@ export default function App() {
   const handleBatchDeleteCards = (cardIds: string[]) => {
     const idSet = new Set(cardIds);
     setCards((prev) => prev.filter((c) => !idSet.has(c.id)));
+    cardIds.forEach((id) => deleteSingleCardFromCloud(id));
   };
 
   // Task 12: Batch Update Category
@@ -484,6 +526,7 @@ export default function App() {
   const handleUpdateCard = (updated: FlashCard) => {
     setCards((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
     setSelectedCardForDetail(updated);
+    uploadSingleCardToCloud(updated);
   };
 
   // 7. Complete Speech Evaluation
@@ -707,6 +750,8 @@ export default function App() {
         isGenerating={isGeneratingCard}
         generationProgress={generationProgress}
         generationStatus={generationStatus}
+        userProfile={userProfile}
+        onOpenAuthModal={() => setIsSupabaseAuthOpen(true)}
       />
 
       {/* 2. Main Screen View Content (Learn / Review / Library) */}
@@ -819,7 +864,7 @@ export default function App() {
               sound.playKeyClick();
               setCurrentTab(tab);
             }}
-            onOpenSyncModal={() => setIsSyncLoginModalOpen(true)}
+            onOpenSyncModal={() => setIsSupabaseAuthOpen(true)}
           />
         )}
       </main>
@@ -852,7 +897,7 @@ export default function App() {
         streakDays={streakDays}
         feathers={feathers}
         totalReviewCount={totalReviewsCount}
-        onOpenSyncModal={() => setIsSyncLoginModalOpen(true)}
+        onOpenSyncModal={() => setIsSupabaseAuthOpen(true)}
       />
 
       {/* 5. Modals */}
@@ -908,16 +953,17 @@ export default function App() {
         baseUrl={settings.customBaseUrl}
       />
 
-      {/* Cloudflare D1 / Worker Cloud Sync & Login Modal */}
-      <SyncLoginModal
-        isOpen={isSyncLoginModalOpen}
-        onClose={() => setIsSyncLoginModalOpen(false)}
+      {/* Supabase Cloud Sync & Login Modal */}
+      <SupabaseAuthModal
+        isOpen={isSupabaseAuthOpen}
+        onClose={() => setIsSupabaseAuthOpen(false)}
+        cards={cards}
+        onUpdateCards={(newCards) => setCards(newCards)}
         userProfile={userProfile}
-        onSaveUserProfile={(newProfile) => {
+        onUpdateUserProfile={(newProfile) => {
           setUserProfile(newProfile);
           saveUserProfile(newProfile);
         }}
-        onSyncSuccess={reloadAllData}
       />
 
       {/* 组件旁引导：目标控件都在学习页，所以只在学习页挂载 */}

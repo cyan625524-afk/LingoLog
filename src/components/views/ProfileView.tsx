@@ -218,7 +218,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     }
                   }}
                   className="relative shrink-0 cursor-pointer group"
-                  title="点击头像：登录并开启 Cloudflare 多端同步"
+                  title="点击头像：登录并开启 Supabase 多端云同步"
                 >
                   <img
                     src={profileData.avatar}

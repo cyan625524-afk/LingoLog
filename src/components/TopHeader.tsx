@@ -14,7 +14,7 @@ import {
   Menu,
 } from 'lucide-react';
 import { sound } from '../utils/audio';
-import { AppSettings, NavTab } from '../types';
+import { AppSettings, NavTab, UserProfile } from '../types';
 import { BrassNameplate } from './common/BrassNameplate';
 import { SignalLamp } from './common/SignalLamp';
 
@@ -33,6 +33,8 @@ interface TopHeaderProps {
   isGenerating?: boolean;
   generationProgress?: number;
   generationStatus?: string;
+  userProfile?: UserProfile;
+  onOpenAuthModal?: () => void;
 }
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
@@ -49,6 +51,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   isGenerating = false,
   generationProgress = 100,
   generationStatus = '',
+  userProfile,
+  onOpenAuthModal,
 }) => {
   const toggleSound = () => {
     const next = !settings.soundEnabled;
@@ -110,8 +114,30 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           </div>
         </div>
 
-        {/* Mobile Right: "我的" button trigger */}
+        {/* Mobile Right: Avatar (Login trigger) & "我的" button trigger */}
         <div className="flex md:hidden items-center gap-2">
+          {onOpenAuthModal && (
+            <button
+              type="button"
+              onClick={() => {
+                sound.playKeyClick();
+                onOpenAuthModal();
+              }}
+              className="relative p-0.5 rounded-sm bg-[#121c14] border border-[#d49e3d]/70 cursor-pointer flex items-center justify-center"
+              title={userProfile?.isLoggedIn ? "已登录云同步 (点击管理)" : "点击头像登录并开启多端同步"}
+            >
+              <img
+                src={userProfile?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=teleprinter"}
+                alt="User"
+                className="w-6 h-6 rounded-xs object-cover"
+              />
+              <span
+                className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-[#182319] ${
+                  userProfile?.isLoggedIn ? 'bg-emerald-500' : 'bg-stone-500'
+                }`}
+              />
+            </button>
+          )}
           <button
             onClick={() => {
               sound.playKeyClick();
@@ -214,8 +240,32 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           </button>
         </nav>
 
-        {/* RIGHT: Quick Sound & Merit Feathers - Hidden on mobile, shown on md+ screens */}
-        <div className="hidden md:flex items-center gap-2 text-xs">
+        {/* RIGHT: Avatar (Login trigger), Quick Sound & Merit Feathers - Hidden on mobile, shown on md+ screens */}
+        <div className="hidden md:flex items-center gap-2.5 text-xs">
+          {/* User Avatar (Click to open Supabase Cloud Sync / Login) */}
+          {onOpenAuthModal && (
+            <button
+              type="button"
+              onClick={() => {
+                sound.playKeyClick();
+                onOpenAuthModal();
+              }}
+              title={userProfile?.isLoggedIn ? "已连接 Supabase 云端同步 (点击管理)" : "点击头像登录：开启多端实时同步"}
+              className="relative flex items-center justify-center p-0.5 rounded-sm bg-[#121c14] border border-[#d49e3d]/70 hover:border-[#d49e3d] transition-all cursor-pointer group"
+            >
+              <img
+                src={userProfile?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=teleprinter"}
+                alt="User"
+                className="w-6 h-6 rounded-xs object-cover"
+              />
+              <span
+                className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-[#182319] ${
+                  userProfile?.isLoggedIn ? 'bg-emerald-500' : 'bg-stone-500'
+                }`}
+              />
+            </button>
+          )}
+
           {/* Feather Balance */}
           <div
             onClick={() => {

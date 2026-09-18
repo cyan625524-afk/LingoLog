@@ -27,8 +27,7 @@ import confetti from 'canvas-confetti';
 import { DailyQuest, HeatmapDay, ShopItem, FlashCard, UserProfile } from '../../types';
 import { sound } from '../../utils/audio';
 import { formatDate, calculateStreakFromHeatmap, isCardDue } from '../../utils/ebbinghaus';
-import { TelegramStamp } from '../common/TelegramStamp';
-import { computeTitles, calculateDaysSinceJoin, getEquippedTitle } from '../../utils/titles';
+import { computeTitles, getEquippedTitle } from '../../utils/titles';
 
 interface ProgressViewProps {
   cards?: FlashCard[];
@@ -118,22 +117,55 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     return calculateStreakFromHeatmap(heatmap, cards);
   }, [heatmap, cards]);
 
-  // 1.5 Calculate honorary titles based on registration days, streak, and card count
-  const daysSinceJoin = useMemo(
-    () => calculateDaysSinceJoin(userProfile?.joinDate),
-    [userProfile?.joinDate]
-  );
+  // 1.2 计算热力图上有颜色（真实有新卡/复习/开口说/补签）的实际有效天数
+  const activeHeatmapDays = useMemo(() => {
+    const coloredDates = new Set<string>();
+
+    // A. 从卡片记录提取（新卡创建、艾宾浩斯复审历史、口语跟读录音）
+    cards.forEach((c) => {
+      if (c.createdAt) coloredDates.add(c.createdAt.slice(0, 10));
+      if (c.lastReviewedAt) coloredDates.add(c.lastReviewedAt.slice(0, 10));
+      if (Array.isArray(c.reviewHistory)) {
+        c.reviewHistory.forEach((h) => {
+          if (typeof h === 'string') coloredDates.add(h.slice(0, 10));
+        });
+      }
+      if (Array.isArray(c.speechRecords)) {
+        c.speechRecords.forEach((sr) => {
+          if (sr?.date) coloredDates.add(sr.date.slice(0, 10));
+        });
+      }
+    });
+
+    // B. 从热力表活动记录提取（有效学习时长、学习次数、复习次数、补签印章）
+    Object.entries(heatmap).forEach(([dStr, day]) => {
+      const hasActivity =
+        (day.count ?? 0) > 0 ||
+        (day.learnedCount ?? 0) > 0 ||
+        (day.reviewedCount ?? 0) > 0 ||
+        (day.spokenCount ?? 0) > 0 ||
+        (day.studyMinutes ?? 0) > 0 ||
+        day.isMakeup;
+      if (hasActivity) {
+        coloredDates.add(dStr);
+      }
+    });
+
+    return coloredDates.size;
+  }, [heatmap, cards]);
+
+  // 1.5 Calculate honorary titles based on active heatmap days, streak, and card count
   const equippedTitle = useMemo(
     () => getEquippedTitle(userProfile),
     [userProfile?.equippedTitle]
   );
   const allTitles = useMemo(() => {
     return computeTitles({
-      daysSinceJoin,
+      activeHeatmapDays,
       streakDays: derivedStreakDays,
       totalCards: cards.length,
     });
-  }, [daysSinceJoin, derivedStreakDays, cards.length]);
+  }, [activeHeatmapDays, derivedStreakDays, cards.length]);
   const unlockedTitlesCount = useMemo(
     () => allTitles.filter((t) => t.isUnlocked).length,
     [allTitles]
@@ -639,7 +671,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 sound.playKeyClick();
                 setActiveSubTab('progress');
               }}
-              className={`px-2 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-1.5 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap min-w-0 overflow-hidden ${
                 activeSubTab === 'progress'
                   ? 'bg-[#d49e3d] text-stone-950'
                   : 'bg-[#243427] text-stone-300 hover:text-white'
@@ -655,7 +687,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 sound.playKeyClick();
                 setActiveSubTab('titles');
               }}
-              className={`px-2 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-1.5 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap min-w-0 overflow-hidden ${
                 activeSubTab === 'titles'
                   ? 'bg-[#d49e3d] text-stone-950'
                   : 'bg-[#243427] text-stone-300 hover:text-white'
@@ -677,7 +709,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 sound.playKeyClick();
                 setActiveSubTab('shop');
               }}
-              className={`px-2 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap ${
+              className={`px-1.5 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap min-w-0 overflow-hidden ${
                 activeSubTab === 'shop'
                   ? 'bg-[#d49e3d] text-stone-950'
                   : 'bg-[#243427] text-stone-300 hover:text-white'
@@ -689,7 +721,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 }`}
               />
               <span>羽毛商店</span>
-              <span className={`text-[10px] font-mono font-bold ${activeSubTab === 'shop' ? 'text-stone-950' : 'text-[#d49e3d]'}`}>({feathers}🪶)</span>
+              <span className={`hidden sm:inline text-[10px] font-mono font-bold ${activeSubTab === 'shop' ? 'text-stone-950' : 'text-[#d49e3d]'}`}>
+                ({feathers}🪶)
+              </span>
             </button>
           </div>
         </div>
@@ -1109,38 +1143,18 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
         {activeSubTab === 'titles' && (
           /* TAB 2: 荣誉代号与称号 (HONORARY TITLES) */
           <div className="w-full space-y-4 sm:space-y-5 animate-in fade-in duration-200">
-            {/* Header: Current Equipped Title Dossier Card */}
-            <div className="relative bg-[#243427] text-white rounded-xs p-4 sm:p-5 shadow-[4px_4px_0px_#0e1610] border-2 border-stone-900 flex flex-col sm:flex-row sm:items-center justify-between gap-4 overflow-hidden">
-              <div className="space-y-2 z-10">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[9px] text-[#d49e3d] font-bold tracking-widest uppercase">
-                    OPERATOR COMMISSION & TITLES
-                  </span>
-                  <span className="text-[10px] font-mono text-emerald-300 font-bold px-1.5 py-0.5 bg-stone-900/60 rounded-xs border border-[#37493a]">
-                    已授予 {unlockedTitlesCount} / {allTitles.length} 项代号
-                  </span>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <div className="px-3 py-1.5 rounded-xs bg-[#d49e3d] text-stone-950 font-serif-display font-black text-sm sm:text-base border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] flex items-center gap-1.5">
-                    <Award className="w-4 h-4 text-stone-950" />
-                    <span>{equippedTitle}</span>
-                  </div>
-                  <span className="text-xs font-serif-body text-stone-300">
-                    当前全局佩戴称号，展示在报务员名字正下方
-                  </span>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-stone-300 pt-0.5">
-                  <span>司职历程: <strong className="text-white">{daysSinceJoin}</strong> 天</span>
-                  <span>·</span>
-                  <span>连续值机: <strong className="text-[#d49e3d]">{derivedStreakDays}</strong> 天</span>
-                  <span>·</span>
-                  <span>密电库藏: <strong className="text-emerald-400">{cards.length}</strong> 封</span>
+            {/* Header: Current Equipped Title Dossier Card - 单行展示当前佩戴称号与称号数量 */}
+            <div className="bg-[#243427] text-white rounded-xs px-3.5 py-2.5 sm:px-5 sm:py-3 shadow-[4px_4px_0px_#0e1610] border-2 border-stone-900 flex items-center justify-between gap-2 overflow-hidden">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="px-3 py-1.5 rounded-xs bg-[#d49e3d] text-stone-950 font-serif-display font-black text-sm sm:text-base border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] flex items-center gap-1.5 shrink-0">
+                  <Award className="w-4 h-4 text-stone-950 shrink-0" />
+                  <span>{equippedTitle}</span>
                 </div>
               </div>
 
-              <TelegramStamp text="官方功勋任命" variant="secret" />
+              <span className="text-[11px] sm:text-xs font-mono text-emerald-300 font-bold px-2.5 py-1 bg-stone-900/60 rounded-xs border border-[#37493a] shrink-0">
+                已授予 {unlockedTitlesCount} / {allTitles.length} 项代号
+              </span>
             </div>
 
             {/* Title Categories */}
@@ -1149,7 +1163,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
               const catConfig = {
                 join_days: {
                   title: '司职历程系列',
-                  subtitle: '依入职服务天数授予（首日自动获得新手电报员）',
+                  subtitle: '依热力图有颜色的累计值机天数授予（首日自动获得新手电报员）',
                   icon: '📻',
                 },
                 streak: {

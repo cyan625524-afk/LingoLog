@@ -78,7 +78,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   email: 'telegrapher@lingolog.org',
   avatar: DEFAULT_AVATAR,
   isLoggedIn: true,
-  joinDate: '2025-01-01',
+  joinDate: formatDate(new Date()),
   role: '特级电报员',
   equippedTitle: DEFAULT_TITLE,
 };

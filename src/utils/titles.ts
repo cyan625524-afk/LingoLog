@@ -12,14 +12,14 @@ export interface TitleDefinition {
 }
 
 export const TITLE_DEFINITIONS: TitleDefinition[] = [
-  // 1. 司职历程 (注册与司职天数)
+  // 1. 司职历程 (严格与热力图有颜色的值机天数挂钩)
   {
     id: 'title-rookie',
     name: '新手电报员',
     category: 'join_days',
     categoryLabel: '司职历程',
     icon: '📻',
-    description: '初入电讯台，收发首份电文（注册首日自动获得）',
+    description: '初入电讯台，收发首份电文（首日值机打卡自动获得）',
     targetValue: 1,
     unit: '天',
   },
@@ -29,7 +29,7 @@ export const TITLE_DEFINITIONS: TitleDefinition[] = [
     category: 'join_days',
     categoryLabel: '司职历程',
     icon: '⚡',
-    description: '前哨司职满一周，熟稔发报节奏与收码规范',
+    description: '热力图值机满 7 天，熟稔发报节奏与收码规范',
     targetValue: 7,
     unit: '天',
   },
@@ -39,7 +39,7 @@ export const TITLE_DEFINITIONS: TitleDefinition[] = [
     category: 'join_days',
     categoryLabel: '司职历程',
     icon: '📜',
-    description: '前哨司职满一个月，成为不可或缺的王牌特派员',
+    description: '热力图值机满 30 天，成为不可或缺的王牌特派员',
     targetValue: 30,
     unit: '天',
   },
@@ -129,7 +129,9 @@ export function calculateDaysSinceJoin(joinDate?: string): number {
 }
 
 export interface TitleMetrics {
-  daysSinceJoin: number;
+  /** 严格与热力图有颜色（新卡片/复核/开口说/补签）的实际有效天数挂钩 */
+  activeHeatmapDays?: number;
+  daysSinceJoin?: number;
   streakDays: number;
   totalCards: number;
 }
@@ -139,16 +141,18 @@ export function computeTitles(metrics: TitleMetrics): TitleItem[] {
   return TITLE_DEFINITIONS.map((def) => {
     let currentValue = 0;
     if (def.category === 'join_days') {
-      currentValue = metrics.daysSinceJoin;
+      // 严格与热力图有颜色的天数挂钩
+      currentValue = metrics.activeHeatmapDays !== undefined ? metrics.activeHeatmapDays : (metrics.daysSinceJoin || 0);
     } else if (def.category === 'streak') {
       currentValue = metrics.streakDays;
     } else if (def.category === 'cards') {
       currentValue = metrics.totalCards;
     }
 
-    const isUnlocked = currentValue >= def.targetValue;
+    // 新手电报员首日自动获得；其余必须达成目标天数/张数
+    const isUnlocked = def.id === 'title-rookie' ? true : currentValue >= def.targetValue;
     const progressText = isUnlocked
-      ? `已达成 (${Math.min(currentValue, def.targetValue)}/${def.targetValue} ${def.unit})`
+      ? `已达成 (${def.targetValue}/${def.targetValue} ${def.unit})`
       : `${currentValue}/${def.targetValue} ${def.unit}`;
 
     return {
@@ -159,7 +163,7 @@ export function computeTitles(metrics: TitleMetrics): TitleItem[] {
       icon: def.icon,
       description: def.description,
       targetValue: def.targetValue,
-      currentValue,
+      currentValue: def.id === 'title-rookie' ? Math.max(1, currentValue) : currentValue,
       isUnlocked,
       progressText,
     };

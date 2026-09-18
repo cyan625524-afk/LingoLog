@@ -513,3 +513,223 @@
   opacity: 0.85;
 }
 
+/* ==========================================================================
+   14. Full Page Themes (页面皮肤系统 - 全站所有 UI 颜色跟随切换)
+   ========================================================================== */
+
+/* --- 1. 暗夜极客赛博风 (Cyber Neon) --- */
+html[data-page-theme="cyber"] body,
+html[data-page-theme="cyber"] .bg-\[\#182319\],
+html[data-page-theme="cyber"] .bg-\[\#162218\],
+html[data-page-theme="cyber"] .bg-\[\#1c261e\],
+html[data-page-theme="cyber"] .bg-\[\#141c15\] {
+  background-color: #0b0f17 !important;
+}
+
+html[data-page-theme="cyber"] .bg-\[\#121c14\] {
+  background-color: #080c12 !important;
+}
+
+html[data-page-theme="cyber"] .bg-\[\#243427\] {
+  background-color: #131c28 !important;
+  border-color: rgba(0, 255, 157, 0.25) !important;
+}
+
+html[data-page-theme="cyber"] .bg-\[\#f4edd3\] {
+  background-color: #15202e !important;
+  color: #e2e8f0 !important;
+}
+
+html[data-page-theme="cyber"] .bg-\[\#eee5c6\],
+html[data-page-theme="cyber"] .bg-\[\#faf7ee\],
+html[data-page-theme="cyber"] .bg-\[\#faf9f5\] {
+  background-color: #0e1622 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-page-theme="cyber"] .text-\[\#d49e3d\] {
+  color: #00ff9d !important;
+  text-shadow: 0 0 8px rgba(0, 255, 157, 0.35);
+}
+
+html[data-page-theme="cyber"] .bg-\[\#d49e3d\] {
+  background-color: #00ff9d !important;
+  color: #06170e !important;
+  border-color: #00ff9d !important;
+}
+
+html[data-page-theme="cyber"] .border-\[\#d49e3d\] {
+  border-color: #00ff9d !important;
+}
+
+html[data-page-theme="cyber"] .border-stone-900 {
+  border-color: #243548 !important;
+}
+
+html[data-page-theme="cyber"] .border-stone-300,
+html[data-page-theme="cyber"] .border-stone-400 {
+  border-color: #1a2736 !important;
+}
+
+html[data-page-theme="cyber"] .text-stone-900,
+html[data-page-theme="cyber"] .text-stone-800 {
+  color: #f1f5f9 !important;
+}
+
+html[data-page-theme="cyber"] .text-stone-600,
+html[data-page-theme="cyber"] .text-stone-700 {
+  color: #94a3b8 !important;
+}
+
+html[data-page-theme="cyber"] .text-stone-500 {
+  color: #64748b !important;
+}
+
+
+/* --- 2. 晨曦法式暖阳风 (Warm Sunlight) --- */
+html[data-page-theme="sunlight"] body,
+html[data-page-theme="sunlight"] .bg-\[\#182319\],
+html[data-page-theme="sunlight"] .bg-\[\#162218\],
+html[data-page-theme="sunlight"] .bg-\[\#1c261e\],
+html[data-page-theme="sunlight"] .bg-\[\#141c15\] {
+  background-color: #f6eee3 !important;
+}
+
+html[data-page-theme="sunlight"] .bg-\[\#121c14\] {
+  background-color: #ede3d4 !important;
+}
+
+html[data-page-theme="sunlight"] .bg-\[\#243427\] {
+  background-color: #694025 !important;
+  border-color: #52311c !important;
+}
+
+html[data-page-theme="sunlight"] .bg-\[\#f4edd3\] {
+  background-color: #fffdf9 !important;
+  color: #2b1a10 !important;
+}
+
+html[data-page-theme="sunlight"] .bg-\[\#eee5c6\],
+html[data-page-theme="sunlight"] .bg-\[\#faf7ee\],
+html[data-page-theme="sunlight"] .bg-\[\#faf9f5\] {
+  background-color: #fcf6ee !important;
+  color: #3b2416 !important;
+}
+
+html[data-page-theme="sunlight"] .text-\[\#d49e3d\] {
+  color: #c27803 !important;
+}
+
+html[data-page-theme="sunlight"] .bg-\[\#d49e3d\] {
+  background-color: #d97706 !important;
+  color: #fffaf0 !important;
+  border-color: #78350f !important;
+}
+
+html[data-page-theme="sunlight"] .border-\[\#d49e3d\] {
+  border-color: #d97706 !important;
+}
+
+html[data-page-theme="sunlight"] .border-stone-900 {
+  border-color: #5c381e !important;
+}
+
+html[data-page-theme="sunlight"] .border-stone-300,
+html[data-page-theme="sunlight"] .border-stone-400 {
+  border-color: #dfd0be !important;
+}
+
+html[data-page-theme="sunlight"] .text-stone-100,
+html[data-page-theme="sunlight"] .text-stone-200,
+html[data-page-theme="sunlight"] .text-stone-300 {
+  color: #2c1a0e !important;
+}
+
+html[data-page-theme="sunlight"] .text-stone-400 {
+  color: #6b4d36 !important;
+}
+
+html[data-page-theme="sunlight"] .text-stone-500 {
+  color: #8c684d !important;
+}
+
+html[data-page-theme="sunlight"] .text-stone-900,
+html[data-page-theme="sunlight"] .text-stone-800 {
+  color: #2c1a0e !important;
+}
+
+html[data-page-theme="sunlight"] .text-stone-600,
+html[data-page-theme="sunlight"] .text-stone-700 {
+  color: #73533c !important;
+}
+
+
+/* --- 3. 深海潜艇监听风 (Deep Oceanic) --- */
+html[data-page-theme="ocean"] body,
+html[data-page-theme="ocean"] .bg-\[\#182319\],
+html[data-page-theme="ocean"] .bg-\[\#162218\],
+html[data-page-theme="ocean"] .bg-\[\#1c261e\],
+html[data-page-theme="ocean"] .bg-\[\#141c15\] {
+  background-color: #08111a !important;
+}
+
+html[data-page-theme="ocean"] .bg-\[\#121c14\] {
+  background-color: #060e16 !important;
+}
+
+html[data-page-theme="ocean"] .bg-\[\#243427\] {
+  background-color: #122438 !important;
+  border-color: rgba(56, 189, 248, 0.3) !important;
+}
+
+html[data-page-theme="ocean"] .bg-\[\#f4edd3\] {
+  background-color: #132233 !important;
+  color: #e0f2fe !important;
+}
+
+html[data-page-theme="ocean"] .bg-\[\#eee5c6\],
+html[data-page-theme="ocean"] .bg-\[\#faf7ee\],
+html[data-page-theme="ocean"] .bg-\[\#faf9f5\] {
+  background-color: #0d1927 !important;
+  color: #bae6fd !important;
+}
+
+html[data-page-theme="ocean"] .text-\[\#d49e3d\] {
+  color: #38bdf8 !important;
+  text-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+}
+
+html[data-page-theme="ocean"] .bg-\[\#d49e3d\] {
+  background-color: #0284c7 !important;
+  color: #ffffff !important;
+  border-color: #38bdf8 !important;
+}
+
+html[data-page-theme="ocean"] .border-\[\#d49e3d\] {
+  border-color: #38bdf8 !important;
+}
+
+html[data-page-theme="ocean"] .border-stone-900 {
+  border-color: #1f3b58 !important;
+}
+
+html[data-page-theme="ocean"] .border-stone-300,
+html[data-page-theme="ocean"] .border-stone-400 {
+  border-color: #162a3f !important;
+}
+
+html[data-page-theme="ocean"] .text-stone-900,
+html[data-page-theme="ocean"] .text-stone-800 {
+  color: #f0f9ff !important;
+}
+
+html[data-page-theme="ocean"] .text-stone-600,
+html[data-page-theme="ocean"] .text-stone-700 {
+  color: #94a3b8 !important;
+}
+
+html[data-page-theme="ocean"] .text-stone-500 {
+  color: #64748b !important;
+}
+
+

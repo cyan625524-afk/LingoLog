@@ -374,12 +374,13 @@ export function loadShopItems(): ShopItem[] {
     const storedMap = new Map(stored.map((i) => [i.id, i]));
     // Merge redesigned INITIAL_SHOP_ITEMS with user's owned/active state
     return INITIAL_SHOP_ITEMS.map((item) => {
-      const existing = storedMap.get(item.id);
+      const legacyId = item.id.replace('shop-chassis-', 'shop-skin-');
+      const existing = storedMap.get(item.id) || storedMap.get(legacyId);
       if (existing) {
         return {
           ...item,
-          owned: existing.owned,
-          active: existing.active,
+          owned: existing.owned || item.owned,
+          active: existing.active !== undefined ? existing.active : item.active,
         };
       }
       return item;

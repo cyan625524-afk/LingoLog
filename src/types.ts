@@ -149,7 +149,7 @@ export interface ShopItem {
   description: string;
   cost: number;
   iconName: string;
-  category: 'utility' | 'sound' | 'skin' | 'ai' | 'inspiration' | 'consumable' | 'feature';
+  category: 'guarantee' | 'chassis' | 'theme' | 'utility' | 'skin' | 'sound' | 'consumable' | 'feature';
   owned: boolean;
   active?: boolean;
 }
@@ -250,6 +250,8 @@ export interface AppSettings {
   soundVolume: number;
   soundTheme: 'classic' | 'olympia' | 'mechanical';
   typewriterSkin: 'sage' | 'classic' | 'gold' | 'leather' | 'midnight' | 'emerald';
+  /** 全局页面皮肤风格：经典复古、暗夜赛博、法式晨曦、深海电讯 */
+  pageTheme?: 'vintage' | 'cyber' | 'sunlight' | 'ocean';
   themeMode: 'light' | 'dark';
   enableReminders: boolean;
   reminderTime: string;
@@ -259,6 +261,7 @@ export interface AppSettings {
   enableFsrs?: boolean; // P1 预留 FSRS 算法开关
   streakFreezes: number; // P0 冻结卡数量 (每月自动发2张)
   streakFreezeProtection: boolean; // 是否自动消耗断签保护
+  makeupCards?: number; // 补签印章卡数量
   autoBackupDownload: boolean; // P2 自动下载备份
   lastBackupDate?: string;
 }

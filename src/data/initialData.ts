@@ -125,73 +125,109 @@ export const INITIAL_QUESTS: DailyQuest[] = [
 ];
 
 export const INITIAL_SHOP_ITEMS: ShopItem[] = [
+  // 1. 值机保障 (Guarantee)
+  {
+    id: 'shop-makeup-card',
+    name: '热力表补签印章 (Makeup Stamp)',
+    description: '修补年度热力图漏签记录。可在年度热力表中点击任意未打卡日直接补发值机电报',
+    cost: 30,
+    iconName: 'CalendarCheck',
+    category: 'guarantee',
+    owned: false,
+  },
   {
     id: 'shop-freeze-card',
     name: '值机免死金牌 (Streak Freeze)',
     description: '增加 1 张冻结卡库存。某天遗漏复习时自动消耗，保护连续值机天数不中断',
     cost: 40,
     iconName: 'Shield',
-    category: 'utility',
-    owned: false
-  },
-  {
-    id: 'shop-makeup-card',
-    name: '热力表补签印章 (Makeup Stamp)',
-    description: '修补年度热力图漏签记录。可在年度热力表中点击任意未打卡日直接加盖值机公章',
-    cost: 30,
-    iconName: 'CalendarCheck',
-    category: 'utility',
-    owned: false
-  },
-  {
-    id: 'shop-skin-gold',
-    name: '皇家金箔打字机 (Royal Gold)',
-    description: '解锁华丽金箔铜件打字机。电文起草单标题、金属铭牌与拍发按钮将变为鎏金色',
-    cost: 80,
-    iconName: 'Sparkles',
-    category: 'skin',
+    category: 'guarantee',
     owned: false,
-    active: false
+  },
+
+  // 2. 机身涂装 (Chassis Skin for Typewriter)
+  {
+    id: 'shop-chassis-classic',
+    name: '经典铸铁打字机 (Classic Iron)',
+    description: '初入电讯台标配的经典墨绿铸铁机身，低调扎实，经久耐用',
+    cost: 0,
+    iconName: 'Palette',
+    category: 'chassis',
+    owned: true,
+    active: true,
   },
   {
-    id: 'shop-skin-emerald',
-    name: '剑桥墨绿打字机 (Cambridge Emerald)',
-    description: '学院风复古英伦墨绿涂装。电文起草单变更为沉稳墨绿与象牙白铭牌',
+    id: 'shop-chassis-emerald',
+    name: '剑桥学院墨绿 (Cambridge Emerald)',
+    description: '英伦学院风复古墨绿涂装。电文起草单变更为沉稳墨绿机壳与象牙白铭牌',
     cost: 60,
     iconName: 'Palette',
-    category: 'skin',
+    category: 'chassis',
     owned: false,
-    active: false
+    active: false,
   },
   {
-    id: 'shop-skin-midnight',
-    name: '极夜黑曜石打字机 (Midnight Obsidian)',
-    description: '极简深邃磨砂哑光黑曜石皮肤。暗调金属质感与荧光指示，专为深夜拍发电报打造',
+    id: 'shop-chassis-midnight',
+    name: '极夜黑曜石涂装 (Midnight Obsidian)',
+    description: '极简深邃磨砂哑光黑曜石机身。暗调金属质感与荧光指示，专为深夜拍发电报打造',
     cost: 60,
     iconName: 'Moon',
-    category: 'skin',
+    category: 'chassis',
     owned: false,
-    active: false
+    active: false,
   },
   {
-    id: 'shop-sound-olympia',
-    name: '德产机械打字音效 (Olympia 1960s)',
-    description: '沉浸还原 1960s 机械打字机原声。在打字机输入与翻卡时播放金属击打音',
-    cost: 50,
-    iconName: 'Volume2',
-    category: 'sound',
+    id: 'shop-chassis-gold',
+    name: '皇家金箔打字机 (Royal Gold)',
+    description: '华丽金箔铜件打字机。电文起草单标题、金属铭牌与拍发按钮变为鎏金尊贵质感',
+    cost: 80,
+    iconName: 'Sparkles',
+    category: 'chassis',
+    owned: false,
+    active: false,
+  },
+
+  // 3. 页面皮肤 (Full Webpage Global Theme)
+  {
+    id: 'shop-theme-vintage',
+    name: '经典复古风 (Classic Vintage)',
+    description: '默认复古电报风。全站沉浸式墨绿铸铁底板、暖黄羊皮信纸与黄铜金点缀',
+    cost: 0,
+    iconName: 'Layout',
+    category: 'theme',
     owned: true,
-    active: true
+    active: true,
   },
   {
-    id: 'shop-sprint-review',
-    name: '雷达突击复查券 (Sprint 10 Cards)',
-    description: '打破艾宾浩斯等待期，立即抽取 10 封已归档电报开启一场闪电突击核验',
-    cost: 25,
-    iconName: 'Zap',
-    category: 'consumable',
-    owned: false
-  }
+    id: 'shop-theme-cyber',
+    name: '暗夜极客风 (Cyber Neon)',
+    description: '赛博极夜终端风格。全站切换为深邃黑客底色、暗蓝卡片与电光荧绿按键',
+    cost: 70,
+    iconName: 'Terminal',
+    category: 'theme',
+    owned: false,
+    active: false,
+  },
+  {
+    id: 'shop-theme-sunlight',
+    name: '法式晨曦风 (Warm Sunlight)',
+    description: '巴黎晨光柔美格调。全站切换为温暖奶油晨光底色、柔和浅褐与暖杏焦糖金',
+    cost: 70,
+    iconName: 'Sun',
+    category: 'theme',
+    owned: false,
+    active: false,
+  },
+  {
+    id: 'shop-theme-ocean',
+    name: '深海监听风 (Deep Oceanic)',
+    description: '潜艇深海监听战术风格。全站切换为深邃冷海暗蓝、潜艇舱板与冰川荧光蓝',
+    cost: 70,
+    iconName: 'Radio',
+    category: 'theme',
+    owned: false,
+    active: false,
+  },
 ];
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -203,7 +239,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   soundEnabled: true,
   soundVolume: 0.6,
   soundTheme: 'classic',
-  typewriterSkin: 'sage',
+  typewriterSkin: 'classic',
+  pageTheme: 'vintage',
   themeMode: 'light',
   enableReminders: false,
   reminderTime: '20:30',
@@ -212,5 +249,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   targetRetention: 90,
   streakFreezes: 2,
   streakFreezeProtection: true,
+  makeupCards: 1,
   autoBackupDownload: false,
 };

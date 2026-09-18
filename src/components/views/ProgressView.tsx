@@ -43,6 +43,7 @@ interface ProgressViewProps {
   onToggleShopItem: (itemId: string) => void;
   streakFreezes?: number;
   streakFreezeProtection?: boolean;
+  makeupCards?: number;
   onSelectCard?: (card: FlashCard) => void;
   onNavigateTab?: (tab: 'learn' | 'review' | 'archive') => void;
   onStartSprintReview?: () => void;
@@ -58,12 +59,14 @@ interface YearDayCell {
   createdCount: number; // number of cards created on this date
   reviewedCount: number; // number of card reviews on this date
   spokenCount: number; // number of card speech practices on this date
+  studyMinutes: number;
   activityCount: number; // total = created + reviews + spoken (+ makeup)
-  cards: FlashCard[];
+  isCurrentMonth: boolean;
   isToday: boolean;
   isFuture: boolean;
   isMakeup?: boolean;
-  isOutOfYear?: boolean; // Padding outside Jan 1 - Dec 31
+  isOutOfYear?: boolean;
+  cards: FlashCard[];
 }
 
 export const ProgressView: React.FC<ProgressViewProps> = ({
@@ -79,6 +82,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   onToggleShopItem,
   streakFreezes = 2,
   streakFreezeProtection = true,
+  makeupCards = 0,
   onSelectCard,
   onNavigateTab,
   onStartSprintReview,
@@ -88,7 +92,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   // Subtabs: "总进度", "称号", "羽毛商店"
   const [activeSubTab, setActiveSubTab] = useState<'progress' | 'titles' | 'shop'>('progress');
   const [selectedHeatmapDate, setSelectedHeatmapDate] = useState<string | null>(null);
-  const [shopCategoryFilter, setShopCategoryFilter] = useState<'all' | 'skin' | 'consumable' | 'feature'>('all');
+  const [shopCategoryFilter, setShopCategoryFilter] = useState<'all' | 'guarantee' | 'chassis' | 'theme'>('all');
   const [makeupNotice, setMakeupNotice] = useState<string | null>(null);
   const [claimedQuestIds, setClaimedQuestIds] = useState<Set<string>>(new Set());
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
@@ -537,8 +541,8 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
 
   const handleApplyMakeup = (dateStr: string) => {
     sound.playKeyClick();
-    if (feathers < 30) {
-      setMakeupNotice('补签需消耗 30 功勋羽毛，当前储备不足。可通过起草或复核赚取！');
+    if (makeupCards <= 0 && feathers < 30) {
+      setMakeupNotice('补签需消耗 1 张补签印章卡或 30 功勋羽毛，当前储备不足。可通过起草或复核赚取！');
       setTimeout(() => setMakeupNotice(null), 4000);
       return;
     }
@@ -942,7 +946,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                         onClick={() => handleApplyMakeup(selectedDayInfo.dateStr)}
                         className="px-3 py-1.5 rounded-xs bg-[#d49e3d] hover:bg-[#c99333] active:translate-y-0.5 text-stone-900 font-serif-display font-black text-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer whitespace-nowrap transition-all"
                       >
-                        补签此日 (30🪶)
+                        {makeupCards > 0 ? '补签此日 (消耗1张印章卡)' : '补签此日 (30🪶)'}
                       </button>
                     )}
                   </div>
@@ -1298,9 +1302,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               {[
                 { id: 'all', label: '全部物资' },
-                { id: 'skin', label: '机身涂装' },
-                { id: 'consumable', label: '值机保障' },
-                { id: 'feature', label: '交互特权' },
+                { id: 'guarantee', label: '🛡️ 值机保障' },
+                { id: 'chassis', label: '⌨️ 机身涂装' },
+                { id: 'theme', label: '🎨 页面皮肤' },
               ].map((cat) => (
                 <button
                   key={cat.id}
@@ -1322,10 +1326,30 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
             {/* Shop Items Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
               {filteredShopItems.map((item) => {
-                const isSkin = item.category === 'skin';
+                const isChassis = item.category === 'chassis' || item.category === 'skin';
+                const isTheme = item.category === 'theme';
                 const isFreeze = item.id === 'shop-freeze-card';
-                const isSprint = item.id === 'shop-sprint-review';
                 const isMakeup = item.id === 'shop-makeup-card';
+
+                // Swatch dots for theme
+                const themeDots =
+                  item.id === 'shop-theme-cyber'
+                    ? ['#0b0f17', '#131c28', '#00ff9d']
+                    : item.id === 'shop-theme-sunlight'
+                    ? ['#f6eee3', '#694025', '#d97706']
+                    : item.id === 'shop-theme-ocean'
+                    ? ['#08111a', '#132233', '#38bdf8']
+                    : ['#182319', '#f4edd3', '#d49e3d'];
+
+                // Chassis swatch color
+                const chassisColor =
+                  item.id === 'shop-chassis-gold' || item.id === 'shop-skin-gold'
+                    ? 'bg-[#f7d984]'
+                    : item.id === 'shop-chassis-emerald' || item.id === 'shop-skin-emerald'
+                    ? 'bg-[#1c3829]'
+                    : item.id === 'shop-chassis-midnight' || item.id === 'shop-skin-midnight'
+                    ? 'bg-[#1a201c]'
+                    : 'bg-[#243427]';
 
                 return (
                   <div
@@ -1335,16 +1359,21 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          {isSkin && (
+                          {isChassis && (
                             <div
-                              className={`w-4 h-4 rounded-full border border-stone-900 shrink-0 ${
-                                item.id === 'shop-skin-gold'
-                                  ? 'bg-[#f7d984]'
-                                  : item.id === 'shop-skin-emerald'
-                                  ? 'bg-[#1c3829]'
-                                  : 'bg-[#1a201c]'
-                              }`}
+                              className={`w-4 h-4 rounded-full border border-stone-900 shrink-0 ${chassisColor}`}
                             />
+                          )}
+                          {isTheme && (
+                            <div className="flex items-center -space-x-1 shrink-0 p-0.5 rounded-full border border-stone-900 bg-black/10">
+                              {themeDots.map((dot, idx) => (
+                                <div
+                                  key={idx}
+                                  className="w-3 h-3 rounded-full border border-stone-900 shadow-xs"
+                                  style={{ backgroundColor: dot }}
+                                />
+                              ))}
+                            </div>
                           )}
                           <span className="text-sm font-bold text-stone-900 dark:text-stone-100 font-serif-display">
                             {item.name}
@@ -1352,7 +1381,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
-                          {isSkin && item.owned && (
+                          {isChassis && item.owned && (
                             <span
                               className={`text-[9px] px-1.5 py-0.5 rounded-xs border border-stone-900 font-bold font-mono ${
                                 item.active
@@ -1363,9 +1392,25 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                               {item.active ? 'ACTIVE · 已装配' : 'OWNED · 仓库中'}
                             </span>
                           )}
+                          {isTheme && item.owned && (
+                            <span
+                              className={`text-[9px] px-1.5 py-0.5 rounded-xs border border-stone-900 font-bold font-mono ${
+                                item.active
+                                  ? 'bg-[#243427] text-[#d49e3d]'
+                                  : 'bg-stone-200 dark:bg-stone-800 text-stone-500'
+                              }`}
+                            >
+                              {item.active ? 'ACTIVE · 生效中' : 'OWNED · 已拥有'}
+                            </span>
+                          )}
                           {isFreeze && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded-xs bg-[#243427] text-emerald-400 border border-stone-900 font-bold font-mono">
                               在库: {streakFreezes} 张
+                            </span>
+                          )}
+                          {isMakeup && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-xs bg-[#243427] text-[#d49e3d] border border-stone-900 font-bold font-mono">
+                              在库: {makeupCards} 张
                             </span>
                           )}
                         </div>
@@ -1383,7 +1428,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                       </div>
 
                       <div>
-                        {isSkin ? (
+                        {isChassis ? (
                           item.owned ? (
                             <button
                               onClick={() => {
@@ -1414,6 +1459,37 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                               <span>兑换涂装</span>
                             </button>
                           )
+                        ) : isTheme ? (
+                          item.owned ? (
+                            <button
+                              onClick={() => {
+                                sound.playKeyClick();
+                                onToggleShopItem(item.id);
+                              }}
+                              className={`px-3 py-1.5 rounded-xs text-xs font-serif-display font-black border-2 border-stone-900 transition-all cursor-pointer ${
+                                item.active
+                                  ? 'bg-[#243427] text-[#d49e3d] shadow-[2px_2px_0px_#0e1610]'
+                                  : 'bg-[#d49e3d] hover:bg-[#c99333] text-stone-900 shadow-[2px_2px_0px_#101711]'
+                              }`}
+                            >
+                              {item.active ? '全站生效中 ✨' : '立即切换皮肤 🎨'}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                sound.playKeyClick();
+                                onBuyShopItem(item.id);
+                              }}
+                              disabled={feathers < item.cost}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xs text-xs font-serif-display font-black border-2 border-stone-900 transition-all ${
+                                feathers >= item.cost
+                                  ? 'bg-[#d49e3d] hover:bg-[#c99333] active:translate-y-0.5 text-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer'
+                                  : 'bg-stone-200 dark:bg-stone-800 text-stone-400 border-stone-400 cursor-not-allowed'
+                              }`}
+                            >
+                              <span>兑换皮肤</span>
+                            </button>
+                          )
                         ) : isFreeze ? (
                           <button
                             onClick={() => {
@@ -1429,33 +1505,19 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                           >
                             <span>+1 兑换入库</span>
                           </button>
-                        ) : isSprint ? (
-                          <button
-                            onClick={() => {
-                              sound.playKeyClick();
-                              onBuyShopItem(item.id);
-                            }}
-                            disabled={feathers < item.cost}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xs text-xs font-serif-display font-black border-2 border-stone-900 transition-all ${
-                              feathers >= item.cost
-                                ? 'bg-[#d49e3d] hover:bg-[#c99333] active:translate-y-0.5 text-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer'
-                                : 'bg-stone-200 dark:bg-stone-800 text-stone-400 border-stone-400 cursor-not-allowed'
-                            }`}
-                          >
-                            <span>兑换并立即复查 ⚡</span>
-                          </button>
                         ) : isMakeup ? (
-                          item.owned ? (
-                            <button
-                              onClick={() => {
-                                sound.playKeyClick();
-                                setActiveSubTab('progress');
-                              }}
-                              className="px-3 py-1.5 rounded-xs bg-[#faf7ee] hover:bg-white text-stone-900 font-serif-display font-bold text-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer transition-all"
-                            >
-                              前往热力表补签 📅
-                            </button>
-                          ) : (
+                          <div className="flex items-center gap-1.5">
+                            {makeupCards > 0 && (
+                              <button
+                                onClick={() => {
+                                  sound.playKeyClick();
+                                  setActiveSubTab('progress');
+                                }}
+                                className="px-2 py-1.5 rounded-xs bg-[#faf7ee] dark:bg-[#152017] hover:bg-white text-stone-900 dark:text-stone-100 font-serif-display font-bold text-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer transition-all whitespace-nowrap"
+                              >
+                                去补签 📅
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 sound.playKeyClick();
@@ -1468,9 +1530,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                                   : 'bg-stone-200 dark:bg-stone-800 text-stone-400 border-stone-400 cursor-not-allowed'
                               }`}
                             >
-                              <span>兑换凭证</span>
+                              <span>+1 兑换入库</span>
                             </button>
-                          )
+                          </div>
                         ) : item.owned ? (
                           <span className="text-xs text-stone-500 font-mono font-bold">已入库</span>
                         ) : (
@@ -1486,7 +1548,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                                 : 'bg-stone-200 dark:bg-stone-800 text-stone-400 border-stone-400 cursor-not-allowed'
                             }`}
                           >
-                            <span>兑换特权</span>
+                            <span>兑换物资</span>
                           </button>
                         )}
                       </div>

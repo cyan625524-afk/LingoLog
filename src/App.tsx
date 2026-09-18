@@ -174,6 +174,8 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
+    const theme = settings.pageTheme || 'vintage';
+    document.documentElement.setAttribute('data-page-theme', theme);
   }, [settings]);
 
   // Sync to localStorage (with debounce for high-frequency cards & heatmap)
@@ -613,8 +615,16 @@ export default function App() {
 
   // 10. Makeup Heatmap Check-in
   const handleMakeupCheckin = (dateStr: string) => {
-    if (feathers < 30) return;
-    setFeathers((prev) => Math.max(0, prev - 30));
+    if ((settings.makeupCards || 0) > 0) {
+      setSettings((prev) => ({
+        ...prev,
+        makeupCards: Math.max(0, (prev.makeupCards || 0) - 1),
+      }));
+    } else if (feathers >= 30) {
+      setFeathers((prev) => Math.max(0, prev - 30));
+    } else {
+      return;
+    }
     setHeatmap((prev) => ({
       ...prev,
       [dateStr]: {
@@ -624,6 +634,7 @@ export default function App() {
         isMakeup: true,
       },
     }));
+    sound.playSuccess();
   };
 
   // 11. Buy Shop Item
@@ -631,15 +642,18 @@ export default function App() {
     const item = shopItems.find((i) => i.id === itemId);
     if (!item || feathers < item.cost) return;
 
-    if (item.category === 'consumable') {
+    if (item.category === 'guarantee' || item.category === 'consumable') {
       setFeathers((prev) => prev - item.cost);
       if (itemId === 'shop-freeze-card') {
         setSettings((prev) => ({
           ...prev,
           streakFreezes: (prev.streakFreezes || 0) + 1,
         }));
-      } else if (itemId === 'shop-sprint-review') {
-        handleReleaseBacklog(10);
+      } else if (itemId === 'shop-makeup-card') {
+        setSettings((prev) => ({
+          ...prev,
+          makeupCards: (prev.makeupCards || 0) + 1,
+        }));
       }
       setShopItems((prev) =>
         prev.map((i) => (i.id === itemId ? { ...i, owned: true } : i))
@@ -651,17 +665,35 @@ export default function App() {
     if (item.owned) return;
     setFeathers((prev) => prev - item.cost);
 
-    if (item.category === 'skin') {
-      const skinKey = itemId.replace('shop-skin-', '') as AppSettings['typewriterSkin'];
+    if (item.category === 'chassis' || item.category === 'skin') {
+      const skinKey = itemId
+        .replace('shop-chassis-', '')
+        .replace('shop-skin-', '') as AppSettings['typewriterSkin'];
       setSettings((prev) => ({ ...prev, typewriterSkin: skinKey }));
+    } else if (item.category === 'theme') {
+      const themeKey = itemId.replace('shop-theme-', '') as NonNullable<AppSettings['pageTheme']>;
+      setSettings((prev) => ({ ...prev, pageTheme: themeKey }));
     }
 
     setShopItems((prev) =>
       prev.map((i) => {
         if (i.id === itemId) {
-          return { ...i, owned: true, active: i.category === 'skin' ? true : i.active };
+          return {
+            ...i,
+            owned: true,
+            active:
+              i.category === 'chassis' || i.category === 'skin' || i.category === 'theme'
+                ? true
+                : i.active,
+          };
         }
-        if (item.category === 'skin' && i.category === 'skin') {
+        if (
+          (item.category === 'chassis' || item.category === 'skin') &&
+          (i.category === 'chassis' || i.category === 'skin')
+        ) {
+          return { ...i, active: false };
+        }
+        if (item.category === 'theme' && i.category === 'theme') {
           return { ...i, active: false };
         }
         return i;
@@ -675,15 +707,28 @@ export default function App() {
     const item = shopItems.find((i) => i.id === itemId);
     if (!item || !item.owned) return;
 
-    if (item.category === 'skin') {
-      const skinKey = itemId.replace('shop-skin-', '') as AppSettings['typewriterSkin'];
+    if (item.category === 'chassis' || item.category === 'skin') {
+      const skinKey = itemId
+        .replace('shop-chassis-', '')
+        .replace('shop-skin-', '') as AppSettings['typewriterSkin'];
       const isAlreadyActive = !!item.active;
       const newSkin = isAlreadyActive ? 'classic' : skinKey;
       setSettings((prev) => ({ ...prev, typewriterSkin: newSkin }));
       setShopItems((prev) =>
         prev.map((i) =>
-          i.category === 'skin'
+          i.category === 'chassis' || i.category === 'skin'
             ? { ...i, active: i.id === itemId ? !isAlreadyActive : false }
+            : i
+        )
+      );
+      sound.playKeyClick();
+    } else if (item.category === 'theme') {
+      const themeKey = itemId.replace('shop-theme-', '') as NonNullable<AppSettings['pageTheme']>;
+      setSettings((prev) => ({ ...prev, pageTheme: themeKey }));
+      setShopItems((prev) =>
+        prev.map((i) =>
+          i.category === 'theme'
+            ? { ...i, active: i.id === itemId }
             : i
         )
       );
@@ -856,6 +901,7 @@ export default function App() {
             onBuyShopItem={handleBuyShopItem}
             onToggleShopItem={handleToggleShopItem}
             streakFreezes={settings.streakFreezes || 0}
+            makeupCards={settings.makeupCards || 0}
             onSelectCard={(card) => setSelectedCardForDetail(card)}
             onNavigateTab={(tab) => {
               sound.playKeyClick();

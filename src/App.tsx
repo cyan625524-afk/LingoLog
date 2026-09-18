@@ -29,6 +29,7 @@ import { SyncLoginModal } from './components/modals/SyncLoginModal';
 import { SupabaseAuthModal } from './components/modals/SupabaseAuthModal';
 import { CoachMarkTour } from './components/common/CoachMarkTour';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import {
   getCurrentUser,
   syncCardsWithCloud,
@@ -889,32 +890,34 @@ export default function App() {
         )}
 
         {activeKey === 'progress' && (
-          <ProgressView
-            cards={cards}
-            feathers={feathers}
-            streakDays={streakDays}
-            quests={quests}
-            onClaimQuest={handleClaimQuest}
-            heatmap={heatmap}
-            onMakeupCheckin={handleMakeupCheckin}
-            shopItems={shopItems}
-            onBuyShopItem={handleBuyShopItem}
-            onToggleShopItem={handleToggleShopItem}
-            streakFreezes={settings.streakFreezes || 0}
-            makeupCards={settings.makeupCards || 0}
-            onSelectCard={(card) => setSelectedCardForDetail(card)}
-            onNavigateTab={(tab) => {
-              sound.playKeyClick();
-              if (tab === 'archive') setCurrentTab('library');
-              else setCurrentTab(tab);
-            }}
-            onStartSprintReview={() => handleReleaseBacklog(10)}
-            userProfile={userProfile}
-            onSaveUserProfile={(newProfile) => {
-              setUserProfile(newProfile);
-              saveUserProfile(newProfile);
-            }}
-          />
+          <ErrorBoundary fallbackTitle="值机进度看板异常">
+            <ProgressView
+              cards={cards}
+              feathers={feathers}
+              streakDays={streakDays}
+              quests={quests}
+              onClaimQuest={handleClaimQuest}
+              heatmap={heatmap}
+              onMakeupCheckin={handleMakeupCheckin}
+              shopItems={shopItems}
+              onBuyShopItem={handleBuyShopItem}
+              onToggleShopItem={handleToggleShopItem}
+              streakFreezes={settings.streakFreezes || 0}
+              makeupCards={settings.makeupCards || 0}
+              onSelectCard={(card) => setSelectedCardForDetail(card)}
+              onNavigateTab={(tab) => {
+                sound.playKeyClick();
+                if (tab === 'archive') setCurrentTab('library');
+                else setCurrentTab(tab);
+              }}
+              onStartSprintReview={() => handleReleaseBacklog(10)}
+              userProfile={userProfile}
+              onSaveUserProfile={(newProfile) => {
+                setUserProfile(newProfile);
+                saveUserProfile(newProfile);
+              }}
+            />
+          </ErrorBoundary>
         )}
 
         {activeKey === 'profile' && (

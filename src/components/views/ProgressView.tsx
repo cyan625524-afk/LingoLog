@@ -28,6 +28,7 @@ import { DailyQuest, HeatmapDay, ShopItem, FlashCard, UserProfile } from '../../
 import { sound } from '../../utils/audio';
 import { formatDate, calculateStreakFromHeatmap, isCardDue } from '../../utils/ebbinghaus';
 import { computeTitles, getEquippedTitle } from '../../utils/titles';
+import { TelegramStamp } from '../common/TelegramStamp';
 
 interface ProgressViewProps {
   cards?: FlashCard[];
@@ -122,34 +123,41 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     const coloredDates = new Set<string>();
 
     // A. 从卡片记录提取（新卡创建、艾宾浩斯复审历史、口语跟读录音）
-    cards.forEach((c) => {
-      if (c.createdAt) coloredDates.add(c.createdAt.slice(0, 10));
-      if (c.lastReviewedAt) coloredDates.add(c.lastReviewedAt.slice(0, 10));
+    (cards || []).forEach((c) => {
+      if (!c) return;
+      if (typeof c.createdAt === 'string') coloredDates.add(c.createdAt.slice(0, 10));
+      if (typeof c.lastReviewedAt === 'string') coloredDates.add(c.lastReviewedAt.slice(0, 10));
       if (Array.isArray(c.reviewHistory)) {
         c.reviewHistory.forEach((h) => {
           if (typeof h === 'string') coloredDates.add(h.slice(0, 10));
+          else if (h && typeof h === 'object' && typeof (h as any).date === 'string') {
+            coloredDates.add((h as any).date.slice(0, 10));
+          }
         });
       }
       if (Array.isArray(c.speechRecords)) {
         c.speechRecords.forEach((sr) => {
-          if (sr?.date) coloredDates.add(sr.date.slice(0, 10));
+          if (typeof sr?.date === 'string') coloredDates.add(sr.date.slice(0, 10));
         });
       }
     });
 
     // B. 从热力表活动记录提取（有效学习时长、学习次数、复习次数、补签印章）
-    Object.entries(heatmap).forEach(([dStr, day]) => {
-      const hasActivity =
-        (day.count ?? 0) > 0 ||
-        (day.learnedCount ?? 0) > 0 ||
-        (day.reviewedCount ?? 0) > 0 ||
-        (day.spokenCount ?? 0) > 0 ||
-        (day.studyMinutes ?? 0) > 0 ||
-        day.isMakeup;
-      if (hasActivity) {
-        coloredDates.add(dStr);
-      }
-    });
+    if (heatmap && typeof heatmap === 'object') {
+      Object.entries(heatmap).forEach(([dStr, day]) => {
+        if (!day || typeof day !== 'object') return;
+        const hasActivity =
+          (day.count ?? 0) > 0 ||
+          (day.learnedCount ?? 0) > 0 ||
+          (day.reviewedCount ?? 0) > 0 ||
+          (day.spokenCount ?? 0) > 0 ||
+          (day.studyMinutes ?? 0) > 0 ||
+          !!day.isMakeup;
+        if (hasActivity) {
+          coloredDates.add(dStr);
+        }
+      });
+    }
 
     return coloredDates.size;
   }, [heatmap, cards]);
@@ -163,9 +171,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     return computeTitles({
       activeHeatmapDays,
       streakDays: derivedStreakDays,
-      totalCards: cards.length,
+      totalCards: cards?.length || 0,
     });
-  }, [activeHeatmapDays, derivedStreakDays, cards.length]);
+  }, [activeHeatmapDays, derivedStreakDays, cards?.length]);
   const unlockedTitlesCount = useMemo(
     () => allTitles.filter((t) => t.isUnlocked).length,
     [allTitles]
@@ -267,8 +275,8 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     const yearsWithActivity = new Set<number>();
 
     // Check card creation timestamps
-    cards.forEach((c) => {
-      if (!c.createdAt) return;
+    (cards || []).forEach((c) => {
+      if (!c?.createdAt) return;
       try {
         const d = new Date(c.createdAt);
         if (!isNaN(d.getTime())) {
@@ -283,22 +291,25 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     });
 
     // Check heatmap activity logs
-    Object.entries(heatmap).forEach(([dStr, day]) => {
-      const hasActivity =
-        (day.count ?? 0) > 0 ||
-        (day.learnedCount ?? 0) > 0 ||
-        (day.reviewedCount ?? 0) > 0 ||
-        (day.spokenCount ?? 0) > 0 ||
-        (day.studyMinutes ?? 0) > 0 ||
-        day.isMakeup;
+    if (heatmap && typeof heatmap === 'object') {
+      Object.entries(heatmap).forEach(([dStr, day]) => {
+        if (!day || typeof day !== 'object') return;
+        const hasActivity =
+          (day.count ?? 0) > 0 ||
+          (day.learnedCount ?? 0) > 0 ||
+          (day.reviewedCount ?? 0) > 0 ||
+          (day.spokenCount ?? 0) > 0 ||
+          (day.studyMinutes ?? 0) > 0 ||
+          !!day.isMakeup;
 
-      if (hasActivity) {
-        const yr = parseInt(dStr.slice(0, 4), 10);
-        if (!isNaN(yr) && yr > 2000 && yr < 2100) {
-          yearsWithActivity.add(yr);
+        if (hasActivity) {
+          const yr = parseInt(dStr.slice(0, 4), 10);
+          if (!isNaN(yr) && yr > 2000 && yr < 2100) {
+            yearsWithActivity.add(yr);
+          }
         }
-      }
-    });
+      });
+    }
 
     // Ensure current year always exists
     if (yearsWithActivity.size === 0) {
@@ -454,7 +465,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
           createdCount,
           reviewedCount,
           spokenCount,
+          studyMinutes: hDay?.studyMinutes || 0,
           activityCount,
+          isCurrentMonth: cellDate.getMonth() === new Date().getMonth() && cellDate.getFullYear() === currentYear,
           cards: dayCards,
           isToday,
           isFuture,
@@ -601,7 +614,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
       if (targetCell) break;
     }
 
-    const dayLog = heatmap[selectedHeatmapDate];
+    const dayLog = heatmap ? heatmap[selectedHeatmapDate] : undefined;
     return {
       dateStr: selectedHeatmapDate,
       cards: targetCell ? targetCell.cards : [],
@@ -609,8 +622,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
       activityCount: targetCell ? targetCell.activityCount : 0,
       isToday: selectedHeatmapDate === todayStr,
       isMakeup: targetCell?.isMakeup || !!dayLog?.isMakeup,
-      studyMinutes: dayLog?.studyMinutes || 0,
-      reviewedCount: dayLog?.reviewedCount || dayLog?.reviews || 0,
+      studyMinutes: targetCell ? targetCell.studyMinutes : (dayLog?.studyMinutes || 0),
+      reviewedCount: targetCell ? targetCell.reviewedCount : (dayLog?.reviewedCount || dayLog?.reviews || 0),
+      spokenCount: targetCell ? targetCell.spokenCount : (dayLog?.spokenCount || 0),
     };
   }, [selectedHeatmapDate, fullYearWeeks, heatmap, todayStr]);
 

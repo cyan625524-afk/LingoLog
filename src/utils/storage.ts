@@ -280,6 +280,21 @@ export function loadCards(): FlashCard[] {
     if (!data) return INITIAL_CARDS;
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed) && parsed.length > 0) {
+      // 若本地存储中包含旧版16张默认预设卡片，自动平滑替换为新的内置单卡，并保留用户自己添加的卡片
+      const hasOldDefaultCards = parsed.some(
+        (c) => c && (c.original === '一不小心又熬到很晚了……' || c.originalText === '一不小心又熬到很晚了……')
+      );
+      if (hasOldDefaultCards) {
+        const legacyDefaultIds = new Set([
+          'card-1', 'card-2', 'card-3', 'card-4', 'card-5',
+          'card-6', 'card-7', 'card-8', 'card-9', 'card-10',
+          'card-11', 'card-12', 'card-13', 'card-14', 'card-15', 'card-16',
+        ]);
+        const userCustomCards = parsed.filter((c) => c && !legacyDefaultIds.has(c.id));
+        const migrated = [...userCustomCards, ...INITIAL_CARDS].map((c, idx) => sanitizeFlashCard(c, idx));
+        saveCards(migrated);
+        return migrated;
+      }
       return parsed.map((c, idx) => sanitizeFlashCard(c, idx));
     }
     return INITIAL_CARDS;

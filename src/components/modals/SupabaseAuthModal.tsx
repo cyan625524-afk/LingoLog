@@ -3,21 +3,13 @@ import {
   X,
   Cloud,
   RefreshCw,
-  Check,
   LogOut,
   LogIn,
-  KeyRound,
   Mail,
-  ShieldCheck,
-  ChevronDown,
-  ChevronUp,
-  Database,
-  ExternalLink,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
   getSupabaseConfig,
-  saveSupabaseConfig,
   signUpWithEmail,
   signInWithEmail,
   signOutCloud,
@@ -52,21 +44,8 @@ export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
   const [statusNotice, setStatusNotice] = useState<{ type: 'info' | 'success' | 'error'; text: string } | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState('');
 
-  // Supabase Config Accordion
-  const [showConfig, setShowConfig] = useState(false);
-  const [cfgUrl, setCfgUrl] = useState('');
-  const [cfgKey, setCfgKey] = useState('');
-  const [isConfigSaved, setIsConfigSaved] = useState(false);
-
   useEffect(() => {
     if (isOpen) {
-      const cfg = getSupabaseConfig();
-      setCfgUrl(cfg.url);
-      setCfgKey(cfg.anonKey);
-      setIsConfigSaved(cfg.isConfigured);
-      if (!cfg.isConfigured) {
-        setShowConfig(true);
-      }
       setLastSyncTime(getLastCloudSyncTime());
       checkUser();
     }
@@ -99,19 +78,6 @@ export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Save Config
-  const handleSaveConfig = () => {
-    sound.playKeyClick();
-    if (!cfgUrl.trim() || !cfgKey.trim()) {
-      setStatusNotice({ type: 'error', text: '请填写完整的 Project URL 与 Anon Key' });
-      return;
-    }
-    saveSupabaseConfig(cfgUrl.trim(), cfgKey.trim());
-    setIsConfigSaved(true);
-    setStatusNotice({ type: 'success', text: 'Supabase 云端配置已保存！' });
-    sound.playSuccess();
-  };
-
   // Auth Submit (Sign In or Sign Up)
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,8 +86,7 @@ export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
 
     const cfg = getSupabaseConfig();
     if (!cfg.isConfigured) {
-      setShowConfig(true);
-      setStatusNotice({ type: 'error', text: '请先展开下方并填入 Supabase 项目连接信息' });
+      setStatusNotice({ type: 'error', text: '云端同步服务配置异常，请稍后再试' });
       return;
     }
 
@@ -386,58 +351,9 @@ export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
                 </button>
               </form>
 
-              {/* Supabase Connection Details (Accordion) */}
-              <div className="pt-2 border-t border-dashed border-stone-300">
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playKeyClick();
-                    setShowConfig(!showConfig);
-                  }}
-                  className="w-full flex items-center justify-between text-[11px] font-serif font-bold text-stone-600 hover:text-stone-900 cursor-pointer py-1"
-                >
-                  <span className="flex items-center gap-1">
-                    <Database className="w-3.5 h-3.5 text-[#d49e3d]" />
-                    <span>Supabase 云数据库连接配置</span>
-                    {isConfigSaved && <span className="text-emerald-700">（已就绪）</span>}
-                  </span>
-                  {showConfig ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-
-                {showConfig && (
-                  <div className="mt-2 p-3 bg-[#faf7ee] rounded-xs border border-stone-300 space-y-2.5 text-xs">
-                    <p className="text-[11px] text-stone-600 font-serif leading-relaxed">
-                      填入你在 <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-blue-700 underline inline-flex items-center gap-0.5">supabase.com<ExternalLink className="w-2.5 h-2.5" /></a> 创建的免费项目的 Project URL 与 Anon Key：
-                    </p>
-                    <div>
-                      <span className="block text-[10px] font-mono text-stone-500">Project URL</span>
-                      <input
-                        type="url"
-                        value={cfgUrl}
-                        onChange={(e) => setCfgUrl(e.target.value)}
-                        placeholder="https://xxxxxxxxxxxx.supabase.co"
-                        className="w-full px-2 py-1 text-[11px] bg-white border border-stone-400 rounded-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <span className="block text-[10px] font-mono text-stone-500">Anon Public Key</span>
-                      <input
-                        type="password"
-                        value={cfgKey}
-                        onChange={(e) => setCfgKey(e.target.value)}
-                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                        className="w-full px-2 py-1 text-[11px] bg-white border border-stone-400 rounded-xs font-mono"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleSaveConfig}
-                      className="w-full py-1.5 bg-[#243427] hover:bg-[#1a261d] text-[#f7f2e4] text-[11px] font-bold rounded-xs cursor-pointer"
-                    >
-                      保存云端配置
-                    </button>
-                  </div>
-                )}
+              {/* Cloud Sync Footer Note */}
+              <div className="pt-2 text-center text-[11px] text-stone-500 font-serif border-t border-dashed border-stone-300">
+                ✨ 跨设备实时云端双向同步，生词数据永不丢失
               </div>
             </div>
           )}

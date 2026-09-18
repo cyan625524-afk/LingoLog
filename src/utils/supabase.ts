@@ -26,6 +26,9 @@ export function sanitizeSupabaseUrl(rawUrl: string): string {
   }
 }
 
+const BUILTIN_SUPABASE_URL = 'https://dhuyngljrmxgssxpsdys.supabase.co';
+const BUILTIN_SUPABASE_ANON_KEY = 'sb_publishable_-mRNfbDODN-0cZOeFsEKmA_pq9Xo4yT';
+
 export function getSupabaseConfig(): SupabaseConfig {
   const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
   const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
@@ -33,9 +36,9 @@ export function getSupabaseConfig(): SupabaseConfig {
   const storedUrl = typeof localStorage !== 'undefined' ? localStorage.getItem(K_SUPABASE_URL) || '' : '';
   const storedKey = typeof localStorage !== 'undefined' ? localStorage.getItem(K_SUPABASE_ANON_KEY) || '' : '';
 
-  const rawUrl = (storedUrl || envUrl || '').trim();
+  const rawUrl = (envUrl || storedUrl || BUILTIN_SUPABASE_URL || '').trim();
   const url = sanitizeSupabaseUrl(rawUrl);
-  const anonKey = (storedKey || envKey || '').trim();
+  const anonKey = (envKey || storedKey || BUILTIN_SUPABASE_ANON_KEY || '').trim();
 
   // If stored URL had extra paths like /rest/v1, fix it silently in localStorage
   if (storedUrl && storedUrl !== url && typeof localStorage !== 'undefined') {

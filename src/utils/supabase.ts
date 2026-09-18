@@ -12,6 +12,20 @@ export interface SupabaseConfig {
   isConfigured: boolean;
 }
 
+export function sanitizeSupabaseUrl(rawUrl: string): string {
+  let url = (rawUrl || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) {
+    url = 'https://' + url;
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.origin;
+  } catch {
+    return url.replace(/\/+$/, '');
+  }
+}
+
 export function getSupabaseConfig(): SupabaseConfig {
   const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
   const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
@@ -19,8 +33,14 @@ export function getSupabaseConfig(): SupabaseConfig {
   const storedUrl = typeof localStorage !== 'undefined' ? localStorage.getItem(K_SUPABASE_URL) || '' : '';
   const storedKey = typeof localStorage !== 'undefined' ? localStorage.getItem(K_SUPABASE_ANON_KEY) || '' : '';
 
-  const url = (storedUrl || envUrl || '').trim();
+  const rawUrl = (storedUrl || envUrl || '').trim();
+  const url = sanitizeSupabaseUrl(rawUrl);
   const anonKey = (storedKey || envKey || '').trim();
+
+  // If stored URL had extra paths like /rest/v1, fix it silently in localStorage
+  if (storedUrl && storedUrl !== url && typeof localStorage !== 'undefined') {
+    localStorage.setItem(K_SUPABASE_URL, url);
+  }
 
   return {
     url,
@@ -30,7 +50,7 @@ export function getSupabaseConfig(): SupabaseConfig {
 }
 
 export function saveSupabaseConfig(url: string, anonKey: string): void {
-  const cleanUrl = (url || '').trim();
+  const cleanUrl = sanitizeSupabaseUrl(url);
   const cleanKey = (anonKey || '').trim();
   if (cleanUrl) localStorage.setItem(K_SUPABASE_URL, cleanUrl);
   else localStorage.removeItem(K_SUPABASE_URL);

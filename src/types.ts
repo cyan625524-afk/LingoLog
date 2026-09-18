@@ -212,6 +212,23 @@ export interface UserProfile {
   isLoggedIn: boolean;
   joinDate: string;
   role: string;
+  /** 当前佩戴的荣誉称号 */
+  equippedTitle?: string;
+}
+
+export type TitleCategory = 'join_days' | 'streak' | 'cards';
+
+export interface TitleItem {
+  id: string;
+  name: string;
+  category: TitleCategory;
+  categoryLabel: string;
+  icon: string;
+  description: string;
+  targetValue: number;
+  currentValue: number;
+  isUnlocked: boolean;
+  progressText: string;
 }
 
 export interface AppSettings {

@@ -14,12 +14,15 @@ import {
   LogOut,
   LogIn,
   Cloud,
+  Award,
 } from 'lucide-react';
 import { AppSettings, UserProfile } from '../../types';
 import { sound } from '../../utils/audio';
 import { exportAllDataJson, importAllDataJson } from '../../utils/storage';
 import { requestNotificationPermission } from '../../utils/tts';
 import { ApiEngineControls } from '../common/ApiEngineControls';
+import { AVATAR_PRESETS } from '../../utils/avatars';
+import { getEquippedTitle } from '../../utils/titles';
 
 interface SideProfileDrawerProps {
   isOpen: boolean;
@@ -53,6 +56,7 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
   const [formData, setFormData] = useState<AppSettings>(settings);
   const [profileData, setProfileData] = useState<UserProfile>(userProfile);
   const [isEditingName, setIsEditingName] = useState(false);
+  const [isSelectingAvatar, setIsSelectingAvatar] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -194,20 +198,17 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 font-sans text-xs">
-          {/* Section 1: User Profile Card */}
+          {/* Section 1: User Profile Card (Redesigned & Streamlined) */}
           <div className="bg-[#eee5c6] p-3.5 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] space-y-3">
             <div className="flex items-center gap-3">
+              {/* Retro Minimalist Avatar */}
               <div
                 onClick={() => {
                   sound.playKeyClick();
-                  if (onOpenSyncModal) {
-                    onOpenSyncModal();
-                  } else {
-                    handleToggleLogin();
-                  }
+                  setIsSelectingAvatar(!isSelectingAvatar);
                 }}
                 className="relative cursor-pointer group shrink-0"
-                title="点击头像：登录并开启 Cloudflare 多端同步"
+                title="点击更换复古电讯头像"
               >
                 <img
                   src={profileData.avatar}
@@ -218,81 +219,142 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
                   className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#eee5c6] ${
                     profileData.isLoggedIn ? 'bg-emerald-600' : 'bg-stone-400'
                   }`}
-                  title={profileData.isLoggedIn ? '在线已登录 (已连接多端同步)' : '未登录访客 (点击登录)'}
+                  title={profileData.isLoggedIn ? '在线已登录 (已连接多端同步)' : '未登录访客 (点击多端同步登录)'}
                 />
                 <div className="absolute inset-0 bg-stone-950/60 opacity-0 group-hover:opacity-100 rounded-xs flex flex-col items-center justify-center text-[9px] text-white font-mono transition-opacity">
-                  <Cloud className="w-3.5 h-3.5 text-[#d49e3d]" />
+                  <span>更换</span>
                 </div>
               </div>
 
+              {/* Name, Title & Sync Button */}
               <div className="flex-1 min-w-0">
-                {isEditingName ? (
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="text"
-                      value={profileData.name}
-                      onChange={(e) =>
-                        setProfileData({ ...profileData, name: e.target.value })
+                <div className="flex items-center justify-between gap-1.5">
+                  {isEditingName ? (
+                    <div className="flex items-center gap-1 flex-1">
+                      <input
+                        type="text"
+                        value={profileData.name}
+                        onChange={(e) =>
+                          setProfileData({ ...profileData, name: e.target.value })
+                        }
+                        className="w-full text-xs font-serif-display font-bold p-1 bg-white border border-stone-900 rounded-xs"
+                      />
+                      <button
+                        onClick={handleSaveProfileName}
+                        className="p-1 bg-[#d49e3d] text-stone-900 rounded-xs border border-stone-900 cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-serif-display font-black text-sm text-stone-900 truncate">
+                        {profileData.name}
+                      </span>
+                      <button
+                        onClick={() => setIsEditingName(true)}
+                        className="text-[10px] text-stone-500 hover:text-stone-900 underline font-mono cursor-pointer"
+                      >
+                        编辑
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Multi-Device Cloud Sync Button */}
+                  <button
+                    onClick={() => {
+                      sound.playKeyClick();
+                      if (onOpenSyncModal) {
+                        onOpenSyncModal();
+                      } else {
+                        handleToggleLogin();
                       }
-                      className="w-full text-xs font-serif-display font-bold p-1 bg-white border border-stone-900 rounded-xs"
-                    />
-                    <button
-                      onClick={handleSaveProfileName}
-                      className="p-1 bg-[#d49e3d] text-stone-900 rounded-xs border border-stone-900"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
+                    }}
+                    className="px-2 py-0.5 rounded-xs border border-stone-900 bg-[#faf7ee] hover:bg-white text-[10px] font-serif-display font-bold flex items-center gap-1 shadow-[1px_1px_0px_#101711] cursor-pointer shrink-0 transition-all active:translate-y-0.5"
+                    title={profileData.isLoggedIn ? "已连接 Supabase 多端云同步" : "点击开启多端云同步"}
+                  >
+                    {profileData.isLoggedIn ? (
+                      <>
+                        <Cloud className="w-3 h-3 text-emerald-700" />
+                        <span>多端同步</span>
+                      </>
+                    ) : (
+                      <>
+                        <LogIn className="w-3 h-3 text-emerald-700" />
+                        <span>多端登录</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 名字正下方：荣誉称号徽章 */}
+                <div className="mt-1.5 flex items-center justify-between gap-1.5">
+                  <div
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xs bg-[#243427] text-[#d49e3d] border border-stone-900 font-serif-display font-black text-[11px] shadow-[1px_1px_0px_#101711]"
+                    title="当前佩戴荣誉称号（可在「进度」->「称号」中自选佩戴）"
+                  >
+                    <Award className="w-3 h-3 text-[#d49e3d]" />
+                    <span>{getEquippedTitle(profileData)}</span>
                   </div>
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <span className="font-serif-display font-black text-sm text-stone-900 truncate">
-                      {profileData.name}
-                    </span>
-                    <button
-                      onClick={() => setIsEditingName(true)}
-                      className="text-[10px] text-stone-500 hover:text-stone-900 underline font-mono cursor-pointer"
-                    >
-                      编辑
-                    </button>
-                  </div>
-                )}
-                <div className="flex items-center gap-1 text-[10px] font-mono text-stone-600 mt-0.5">
-                  <span className="bg-[#243427] text-[#d49e3d] px-1 py-0.2 rounded-xs font-bold">
-                    {profileData.id}
-                  </span>
-                  <span className="truncate">{profileData.role}</span>
+
+                  <button
+                    onClick={() => {
+                      sound.playKeyClick();
+                      setIsSelectingAvatar(!isSelectingAvatar);
+                    }}
+                    className="text-[10px] text-stone-500 hover:text-stone-900 font-mono underline cursor-pointer"
+                  >
+                    [换头像]
+                  </button>
                 </div>
               </div>
             </div>
 
-            <div className="pt-2 border-t border-dashed border-stone-400 flex items-center justify-between text-[11px]">
-              <span className="text-stone-600 font-serif">
-                状态: {profileData.isLoggedIn ? '已登录·特级认证' : '未登录·访客浏览'}
-              </span>
-              <button
-                onClick={() => {
-                  sound.playKeyClick();
-                  if (onOpenSyncModal) {
-                    onOpenSyncModal();
-                  } else {
-                    handleToggleLogin();
-                  }
-                }}
-                className="px-2.5 py-1 rounded-xs border border-stone-900 bg-[#faf7ee] hover:bg-white text-[11px] font-serif-display font-bold flex items-center gap-1 shadow-[1px_1px_0px_#101711] cursor-pointer"
-              >
-                {profileData.isLoggedIn ? (
-                  <>
-                    <Cloud className="w-3 h-3 text-emerald-700" />
-                    <span>多端同步</span>
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="w-3 h-3 text-emerald-700" />
-                    <span>多端登录</span>
-                  </>
-                )}
-              </button>
-            </div>
+            {/* Avatar Selector Dropdown Grid */}
+            {isSelectingAvatar && (
+              <div className="p-2.5 bg-[#faf7ee] rounded-xs border-2 border-stone-900 space-y-2 animate-in fade-in duration-150 shadow-[2px_2px_0px_#101711]">
+                <div className="flex items-center justify-between text-[11px] font-serif-display font-bold text-stone-900 border-b border-stone-300 pb-1">
+                  <span>选择复古电讯头像</span>
+                  <button
+                    onClick={() => setIsSelectingAvatar(false)}
+                    className="text-stone-500 hover:text-stone-900 p-0.5 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {AVATAR_PRESETS.map((preset) => {
+                    const isCurrent = profileData.avatar === preset.dataUrl;
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => {
+                          sound.playSuccess();
+                          const next = { ...profileData, avatar: preset.dataUrl };
+                          setProfileData(next);
+                          onSaveUserProfile(next);
+                          setIsSelectingAvatar(false);
+                        }}
+                        className={`flex flex-col items-center gap-1 p-1.5 rounded-xs border transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'bg-[#d49e3d]/20 border-[#d49e3d] ring-1 ring-[#d49e3d]'
+                            : 'bg-white border-stone-300 hover:border-stone-900'
+                        }`}
+                      >
+                        <img
+                          src={preset.dataUrl}
+                          alt={preset.name}
+                          className="w-9 h-9 rounded-xs border border-stone-900 object-cover"
+                        />
+                        <span className="text-[9px] font-serif-display font-bold text-stone-800 truncate w-full text-center">
+                          {preset.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Quick Metrics */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 text-center font-mono text-stone-900">

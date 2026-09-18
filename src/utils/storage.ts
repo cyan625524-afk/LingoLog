@@ -69,21 +69,34 @@ const STORAGE_KEYS = {
   USER_PROFILE: 'lingolog_user_profile_v1',
 };
 
+import { DEFAULT_AVATAR, isLegacyOrInvalidAvatar } from './avatars';
+import { DEFAULT_TITLE } from './titles';
+
 export const DEFAULT_USER_PROFILE: UserProfile = {
   id: 'OPERATOR-084',
   name: '首席发报员',
   email: 'telegrapher@lingolog.org',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+  avatar: DEFAULT_AVATAR,
   isLoggedIn: true,
   joinDate: '2025-01-01',
   role: '特级电报员',
+  equippedTitle: DEFAULT_TITLE,
 };
 
 export function getUserProfile(): UserProfile {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.USER_PROFILE);
     if (!raw) return DEFAULT_USER_PROFILE;
-    return { ...DEFAULT_USER_PROFILE, ...JSON.parse(raw) };
+    const parsed = { ...DEFAULT_USER_PROFILE, ...JSON.parse(raw) };
+    // Automatically sanitize legacy unsplash photo to retro minimalist avatar
+    if (isLegacyOrInvalidAvatar(parsed.avatar)) {
+      parsed.avatar = DEFAULT_AVATAR;
+      safeLocalStorageSet(STORAGE_KEYS.USER_PROFILE, JSON.stringify(parsed));
+    }
+    if (!parsed.equippedTitle) {
+      parsed.equippedTitle = DEFAULT_TITLE;
+    }
+    return parsed;
   } catch (e) {
     return DEFAULT_USER_PROFILE;
   }

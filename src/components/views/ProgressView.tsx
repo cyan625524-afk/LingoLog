@@ -20,12 +20,15 @@ import {
   AlertCircle,
   Trophy,
   X,
+  Award,
+  Lock,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { DailyQuest, HeatmapDay, ShopItem, FlashCard } from '../../types';
+import { DailyQuest, HeatmapDay, ShopItem, FlashCard, UserProfile } from '../../types';
 import { sound } from '../../utils/audio';
 import { formatDate, calculateStreakFromHeatmap, isCardDue } from '../../utils/ebbinghaus';
 import { TelegramStamp } from '../common/TelegramStamp';
+import { computeTitles, calculateDaysSinceJoin, getEquippedTitle } from '../../utils/titles';
 
 interface ProgressViewProps {
   cards?: FlashCard[];
@@ -43,6 +46,8 @@ interface ProgressViewProps {
   onSelectCard?: (card: FlashCard) => void;
   onNavigateTab?: (tab: 'learn' | 'review' | 'archive') => void;
   onStartSprintReview?: () => void;
+  userProfile?: UserProfile;
+  onSaveUserProfile?: (newProfile: UserProfile) => void;
 }
 
 interface YearDayCell {
@@ -64,6 +69,7 @@ interface YearDayCell {
 export const ProgressView: React.FC<ProgressViewProps> = ({
   cards = [],
   feathers,
+  streakDays,
   quests,
   onClaimQuest,
   heatmap,
@@ -76,9 +82,11 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   onSelectCard,
   onNavigateTab,
   onStartSprintReview,
+  userProfile,
+  onSaveUserProfile,
 }) => {
-  // Simplified subtabs: "总进度" and "商店"
-  const [activeSubTab, setActiveSubTab] = useState<'progress' | 'shop'>('progress');
+  // Subtabs: "总进度", "称号", "羽毛商店"
+  const [activeSubTab, setActiveSubTab] = useState<'progress' | 'titles' | 'shop'>('progress');
   const [selectedHeatmapDate, setSelectedHeatmapDate] = useState<string | null>(null);
   const [shopCategoryFilter, setShopCategoryFilter] = useState<'all' | 'skin' | 'consumable' | 'feature'>('all');
   const [makeupNotice, setMakeupNotice] = useState<string | null>(null);
@@ -105,6 +113,37 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   const derivedStreakDays = useMemo(() => {
     return calculateStreakFromHeatmap(heatmap, cards);
   }, [heatmap, cards]);
+
+  // 1.5 Calculate honorary titles based on registration days, streak, and card count
+  const daysSinceJoin = useMemo(
+    () => calculateDaysSinceJoin(userProfile?.joinDate),
+    [userProfile?.joinDate]
+  );
+  const equippedTitle = useMemo(
+    () => getEquippedTitle(userProfile),
+    [userProfile?.equippedTitle]
+  );
+  const allTitles = useMemo(() => {
+    return computeTitles({
+      daysSinceJoin,
+      streakDays: derivedStreakDays,
+      totalCards: cards.length,
+    });
+  }, [daysSinceJoin, derivedStreakDays, cards.length]);
+  const unlockedTitlesCount = useMemo(
+    () => allTitles.filter((t) => t.isUnlocked).length,
+    [allTitles]
+  );
+
+  const handleEquipTitle = (titleName: string) => {
+    sound.playSuccess();
+    if (userProfile && onSaveUserProfile) {
+      onSaveUserProfile({
+        ...userProfile,
+        equippedTitle: titleName,
+      });
+    }
+  };
 
   // 2. Synchronize daily tasks with actual cards & review activities of today
   const syncedQuests = useMemo(() => {
@@ -590,7 +629,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
       <div className="w-full max-w-5xl flex flex-col items-center space-y-4 sm:space-y-6">
         {/* Top Header Action Buttons Row (Matches ArchiveView position, size and style) */}
         <div className="w-full flex items-center justify-end mb-4">
-          <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+          <div className="grid grid-cols-3 sm:flex sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
             <button
               onClick={() => {
                 sound.playKeyClick();
@@ -604,6 +643,29 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
             >
               <Calendar className={`w-3.5 h-3.5 shrink-0 ${activeSubTab === 'progress' ? 'text-stone-950' : 'text-[#d49e3d]'}`} />
               <span>总进度</span>
+            </button>
+
+            {/* TAB 2: 称号 (HONORARY TITLES) */}
+            <button
+              onClick={() => {
+                sound.playKeyClick();
+                setActiveSubTab('titles');
+              }}
+              className={`px-2 sm:px-3 py-1.5 rounded-xs font-serif-display text-[11px] sm:text-xs font-bold border-2 border-stone-900 flex items-center justify-center gap-1 sm:gap-1.5 shadow-[2px_2px_0px_#0e1610] transition-all cursor-pointer whitespace-nowrap ${
+                activeSubTab === 'titles'
+                  ? 'bg-[#d49e3d] text-stone-950'
+                  : 'bg-[#243427] text-stone-300 hover:text-white'
+              }`}
+            >
+              <Award
+                className={`w-3.5 h-3.5 shrink-0 ${
+                  activeSubTab === 'titles' ? 'text-stone-950' : 'text-[#d49e3d]'
+                }`}
+              />
+              <span>称号</span>
+              <span className={`text-[10px] font-mono font-bold ${activeSubTab === 'titles' ? 'text-stone-950' : 'text-[#d49e3d]'}`}>
+                ({unlockedTitlesCount}/9)
+              </span>
             </button>
 
             <button
@@ -628,7 +690,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
           </div>
         </div>
 
-        {activeSubTab === 'progress' ? (
+        {activeSubTab === 'progress' && (
           /* TAB 1: 总进度 (OVERALL PROGRESS & FULL YEAR HEATMAP) */
           <div className="w-full space-y-4 sm:space-y-5">
             {/* Operator Duty Card & Streak (Authoritatively computed from Heatmap & Cards) */}
@@ -1038,8 +1100,172 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
               </div>
             </div>
           </div>
-        ) : (
-          /* TAB 2: 羽毛商店 (FEATHER SHOP - REDESIGNED FOR ACTUAL FEATURES & INTERACTIONS) */
+        )}
+
+        {activeSubTab === 'titles' && (
+          /* TAB 2: 荣誉代号与称号 (HONORARY TITLES) */
+          <div className="w-full space-y-4 sm:space-y-5 animate-in fade-in duration-200">
+            {/* Header: Current Equipped Title Dossier Card */}
+            <div className="relative bg-[#243427] text-white rounded-xs p-4 sm:p-5 shadow-[4px_4px_0px_#0e1610] border-2 border-stone-900 flex flex-col sm:flex-row sm:items-center justify-between gap-4 overflow-hidden">
+              <div className="space-y-2 z-10">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[9px] text-[#d49e3d] font-bold tracking-widest uppercase">
+                    OPERATOR COMMISSION & TITLES
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-300 font-bold px-1.5 py-0.5 bg-stone-900/60 rounded-xs border border-[#37493a]">
+                    已授予 {unlockedTitlesCount} / {allTitles.length} 项代号
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="px-3 py-1.5 rounded-xs bg-[#d49e3d] text-stone-950 font-serif-display font-black text-sm sm:text-base border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] flex items-center gap-1.5">
+                    <Award className="w-4 h-4 text-stone-950" />
+                    <span>{equippedTitle}</span>
+                  </div>
+                  <span className="text-xs font-serif-body text-stone-300">
+                    当前全局佩戴称号，展示在报务员名字正下方
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-stone-300 pt-0.5">
+                  <span>司职历程: <strong className="text-white">{daysSinceJoin}</strong> 天</span>
+                  <span>·</span>
+                  <span>连续值机: <strong className="text-[#d49e3d]">{derivedStreakDays}</strong> 天</span>
+                  <span>·</span>
+                  <span>密电库藏: <strong className="text-emerald-400">{cards.length}</strong> 封</span>
+                </div>
+              </div>
+
+              <TelegramStamp text="官方功勋任命" variant="secret" />
+            </div>
+
+            {/* Title Categories */}
+            {(['join_days', 'streak', 'cards'] as const).map((cat) => {
+              const catTitles = allTitles.filter((t) => t.category === cat);
+              const catConfig = {
+                join_days: {
+                  title: '司职历程系列',
+                  subtitle: '依入职服务天数授予（首日自动获得新手电报员）',
+                  icon: '📻',
+                },
+                streak: {
+                  title: '坚守前哨系列',
+                  subtitle: '依连续每日值机打卡天数授予',
+                  icon: '🕯️',
+                },
+                cards: {
+                  title: '密电库藏系列',
+                  subtitle: '依词库归档卡片总数规模授予',
+                  icon: '✍️',
+                },
+              }[cat];
+
+              return (
+                <div
+                  key={cat}
+                  className="bg-[#f4edd3] dark:bg-[#1a251c] rounded-xs p-4 sm:p-5 border-2 border-stone-900 shadow-[3px_3px_0px_#101711] space-y-3"
+                >
+                  <div className="flex items-center justify-between border-b-2 border-stone-900/20 dark:border-stone-800 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{catConfig.icon}</span>
+                      <span className="font-serif-display font-black text-sm sm:text-base text-stone-900 dark:text-stone-100">
+                        {catConfig.title}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-stone-600 dark:text-stone-400 hidden sm:inline font-bold">
+                      {catConfig.subtitle}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {catTitles.map((t) => {
+                      const isEquipped = equippedTitle === t.name;
+
+                      return (
+                        <div
+                          key={t.id}
+                          className={`p-3.5 rounded-xs border-2 transition-all flex flex-col justify-between ${
+                            t.isUnlocked
+                              ? isEquipped
+                                ? 'bg-[#faf7ee] dark:bg-[#152017] border-[#d49e3d] ring-2 ring-[#d49e3d]/60 shadow-[3px_3px_0px_#d49e3d]'
+                                : 'bg-[#faf7ee] dark:bg-[#152017] border-stone-900 shadow-[2px_2px_0px_#101711] hover:border-[#d49e3d]'
+                              : 'bg-stone-200/50 dark:bg-stone-900/40 border-stone-400 dark:border-stone-800 opacity-60'
+                          }`}
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-lg">{t.icon}</span>
+                                <span
+                                  className={`font-serif-display font-black text-sm ${
+                                    t.isUnlocked
+                                      ? 'text-stone-900 dark:text-stone-100'
+                                      : 'text-stone-500 dark:text-stone-500'
+                                  }`}
+                                >
+                                  {t.name}
+                                </span>
+                              </div>
+                              {isEquipped && (
+                                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-xs bg-[#d49e3d] text-stone-950 font-black">
+                                  佩戴中
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-xs font-serif-body text-stone-600 dark:text-stone-400 leading-relaxed min-h-[36px]">
+                              {t.description}
+                            </p>
+                          </div>
+
+                          <div className="pt-2.5 mt-2 border-t border-dashed border-stone-300 dark:border-stone-800 space-y-2">
+                            <div className="flex items-center justify-between text-[10px] font-mono">
+                              <span className="text-stone-500 dark:text-stone-400 font-serif">达成进度</span>
+                              <span
+                                className={`font-bold ${
+                                  t.isUnlocked
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-stone-500'
+                                }`}
+                              >
+                                {t.progressText}
+                              </span>
+                            </div>
+
+                            {/* Equip Button / Locked Badge */}
+                            {t.isUnlocked ? (
+                              isEquipped ? (
+                                <div className="w-full py-1.5 text-center text-xs font-mono font-bold text-stone-600 dark:text-stone-400 bg-stone-200/70 dark:bg-stone-800/70 rounded-xs border border-stone-300 dark:border-stone-700">
+                                  ✓ 当前佩戴中
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleEquipTitle(t.name)}
+                                  className="w-full py-1.5 rounded-xs bg-[#d49e3d] hover:bg-[#c99333] active:translate-y-0.5 text-stone-950 font-serif-display font-black text-xs border border-stone-900 shadow-[1px_1px_0px_#101711] cursor-pointer transition-all flex items-center justify-center gap-1"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>佩戴此称号</span>
+                                </button>
+                              )
+                            ) : (
+                              <div className="w-full py-1.5 text-center text-xs font-mono text-stone-400 dark:text-stone-600 bg-transparent rounded-xs border border-dashed border-stone-300 dark:border-stone-800 flex items-center justify-center gap-1">
+                                <Lock className="w-3 h-3" />
+                                <span>未达成解锁条件</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {activeSubTab === 'shop' && (
+          /* TAB 3: 羽毛商店 (FEATHER SHOP - REDESIGNED FOR ACTUAL FEATURES & INTERACTIONS) */
           <div className="w-full space-y-4 sm:space-y-5">
             {/* Feather Balance Header */}
             <div className="bg-[#f4edd3] dark:bg-[#1a251c] rounded-xs p-4 sm:p-5 border-2 border-stone-900 shadow-[3px_3px_0px_#101711] flex flex-col sm:flex-row sm:items-center justify-between gap-3">

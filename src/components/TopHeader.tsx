@@ -17,6 +17,7 @@ import { sound } from '../utils/audio';
 import { AppSettings, NavTab, UserProfile } from '../types';
 import { BrassNameplate } from './common/BrassNameplate';
 import { SignalLamp } from './common/SignalLamp';
+import { DEFAULT_AVATAR } from '../utils/avatars';
 
 interface TopHeaderProps {
   currentTab: NavTab;
@@ -127,7 +128,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
               title={userProfile?.isLoggedIn ? "已登录云同步 (点击管理)" : "点击头像登录并开启多端同步"}
             >
               <img
-                src={userProfile?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=teleprinter"}
+                src={userProfile?.avatar || DEFAULT_AVATAR}
                 alt="User"
                 className="w-6 h-6 rounded-xs object-cover"
               />
@@ -254,7 +255,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
               className="relative flex items-center justify-center p-0.5 rounded-sm bg-[#121c14] border border-[#d49e3d]/70 hover:border-[#d49e3d] transition-all cursor-pointer group"
             >
               <img
-                src={userProfile?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=teleprinter"}
+                src={userProfile?.avatar || DEFAULT_AVATAR}
                 alt="User"
                 className="w-6 h-6 rounded-xs object-cover"
               />

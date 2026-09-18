@@ -863,6 +863,11 @@ export default function App() {
               else setCurrentTab(tab);
             }}
             onStartSprintReview={() => handleReleaseBacklog(10)}
+            userProfile={userProfile}
+            onSaveUserProfile={(newProfile) => {
+              setUserProfile(newProfile);
+              saveUserProfile(newProfile);
+            }}
           />
         )}
 

@@ -247,31 +247,9 @@ export function getDayStudyMinutes(day?: HeatmapDay): number {
   return Math.max(1, Math.round(count * 2.5));
 }
 
-// Generate realistic initial heatmap for the year
+// Initial heatmap strictly empty, populated entirely by real user actions
 function generateInitialHeatmap(): Record<string, HeatmapDay> {
-  const result: Record<string, HeatmapDay> = {};
-  const today = new Date();
-  for (let i = 0; i < 90; i++) {
-    const d = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
-    const key = formatDate(d);
-    // Guarantee active streak for the past 14 days so initial state matches 14-day streak
-    const isActive = (i > 0 && i <= 14) || Math.random() > 0.3;
-    if (isActive && i > 0) {
-      const count = Math.floor(Math.random() * 8) + 2;
-      const studyMinutes = Math.max(2, Math.round(count * 2.8 + Math.floor(Math.random() * 5)));
-      result[key] = {
-        date: key,
-        count,
-        reviewedCount: Math.floor(count * 0.7),
-        learnedCount: Math.ceil(count * 0.3),
-        studyMinutes,
-        studySeconds: studyMinutes * 60,
-        reviews: Math.floor(count * 0.7),
-        newCards: Math.ceil(count * 0.3),
-      };
-    }
-  }
-  return result;
+  return {};
 }
 
 export function loadCards(): FlashCard[] {
@@ -330,10 +308,10 @@ export function saveFeathers(feathers: number) {
 export function loadStreak(): number {
   try {
     const val = localStorage.getItem(STORAGE_KEYS.STREAK);
-    const parsed = val !== null ? Number(val) : 14;
-    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 14;
+    const parsed = val !== null ? Number(val) : 0;
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
   } catch {
-    return 14;
+    return 0;
   }
 }
 
@@ -404,10 +382,17 @@ export function saveShopItems(items: ShopItem[]) {
 
 export function loadHeatmap(): Record<string, HeatmapDay> {
   try {
+    const migrated = localStorage.getItem('lingolog_heatmap_real_v1');
+    if (!migrated) {
+      // One-time cleanup of legacy fake random mock heatmap data
+      localStorage.removeItem(STORAGE_KEYS.HEATMAP);
+      localStorage.setItem('lingolog_heatmap_real_v1', 'true');
+      return {};
+    }
     const data = localStorage.getItem(STORAGE_KEYS.HEATMAP);
-    return data ? JSON.parse(data) : generateInitialHeatmap();
+    return data ? JSON.parse(data) : {};
   } catch {
-    return generateInitialHeatmap();
+    return {};
   }
 }
 

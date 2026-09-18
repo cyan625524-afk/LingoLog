@@ -400,6 +400,7 @@ export default function App() {
       settings.targetRetention || 90
     );
 
+    const nowIso = new Date().toISOString();
     setCards((prev) =>
       prev.map((c) =>
         c.id === cardId
@@ -409,7 +410,8 @@ export default function App() {
               intervalStage: nextIntervalStage,
               masteryLevel,
               reviewCount: (c.reviewCount || 0) + 1,
-              lastReviewedAt: new Date().toISOString(),
+              lastReviewedAt: nowIso,
+              reviewHistory: [...(c.reviewHistory || []), nowIso],
             }
           : c
       )
@@ -447,6 +449,7 @@ export default function App() {
               reviewCount: Math.max(0, (lastEntry.prevReviewCount || 1) - 1),
               masteryLevel: lastEntry.prevMasteryLevel,
               lastReviewedAt: lastEntry.prevLastReviewedAt,
+              reviewHistory: (c.reviewHistory || []).slice(0, -1),
             }
           : c
       )

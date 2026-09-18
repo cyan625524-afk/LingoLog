@@ -49,7 +49,9 @@ interface YearDayCell {
   dayOfWeek: number; // 0 = Sun, 1 = Mon, ..., 6 = Sat
   weekIndex: number;
   createdCount: number; // number of cards created on this date
-  activityCount: number; // created + reviews/learning
+  reviewedCount: number; // number of card reviews on this date
+  spokenCount: number; // number of card speech practices on this date
+  activityCount: number; // total = created + reviews + spoken (+ makeup)
   cards: FlashCard[];
   isToday: boolean;
   isFuture: boolean;
@@ -191,21 +193,58 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   // 4. Build the Full Year Heatmap: strictly from Jan 1st to Dec 31st of selectedYear
   const { fullYearWeeks, monthLabels, totalYearCreatedCards, activeDaysCount, totalWeeksCount } = useMemo(() => {
     const dateToCards: Record<string, FlashCard[]> = {};
+    const reviewCountByDate: Record<string, number> = {};
+    const spokenCountByDate: Record<string, number> = {};
+
     cards.forEach((c) => {
-      if (!c.createdAt) return;
-      try {
-        const d = new Date(c.createdAt);
-        if (!isNaN(d.getTime())) {
-          const dStr = formatDate(d);
-          if (!dateToCards[dStr]) dateToCards[dStr] = [];
-          dateToCards[dStr].push(c);
+      // 1. 新卡片 (Created)
+      if (c.createdAt) {
+        try {
+          const d = new Date(c.createdAt);
+          if (!isNaN(d.getTime())) {
+            const dStr = formatDate(d);
+            if (!dateToCards[dStr]) dateToCards[dStr] = [];
+            dateToCards[dStr].push(c);
+          }
+        } catch {
+          const dStr = c.createdAt.slice(0, 10);
+          if (dStr) {
+            if (!dateToCards[dStr]) dateToCards[dStr] = [];
+            dateToCards[dStr].push(c);
+          }
         }
-      } catch {
-        const dStr = c.createdAt.slice(0, 10);
-        if (dStr) {
-          if (!dateToCards[dStr]) dateToCards[dStr] = [];
-          dateToCards[dStr].push(c);
+      }
+
+      // 2. 复习卡片 (Reviewed)
+      if (Array.isArray(c.reviewHistory) && c.reviewHistory.length > 0) {
+        c.reviewHistory.forEach((rh) => {
+          if (typeof rh === 'string') {
+            const rDate = rh.slice(0, 10);
+            if (rDate) {
+              reviewCountByDate[rDate] = (reviewCountByDate[rDate] || 0) + 1;
+            }
+          }
+        });
+      } else if (c.lastReviewedAt) {
+        const lrDate = c.lastReviewedAt.slice(0, 10);
+        if (lrDate) {
+          reviewCountByDate[lrDate] = (reviewCountByDate[lrDate] || 0) + 1;
         }
+      }
+
+      // 3. 开口说卡片 (Spoken)
+      if (Array.isArray(c.speechRecords) && c.speechRecords.length > 0) {
+        c.speechRecords.forEach((sr) => {
+          if (sr?.date) {
+            const sDate = sr.date.slice(0, 10);
+            if (sDate) {
+              spokenCountByDate[sDate] = (spokenCountByDate[sDate] || 0) + 1;
+            }
+          }
+        });
+      } else if ((c.spokenCount || 0) > 0 && c.createdAt) {
+        const sDate = c.createdAt.slice(0, 10);
+        spokenCountByDate[sDate] = (spokenCountByDate[sDate] || 0) + (c.spokenCount || 0);
       }
     });
 
@@ -251,15 +290,24 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
         const isOutOfYear = dayYear !== selectedYear;
 
         const dayCards = dateToCards[dStr] || [];
-        const createdCount = isOutOfYear ? 0 : dayCards.length;
+        const cardCreatedCount = isOutOfYear ? 0 : dayCards.length;
 
         const hDay = heatmap[dStr];
-        const loggedCount = isOutOfYear
-          ? 0
-          : (hDay?.count ?? 0) + (hDay?.reviews ?? hDay?.reviewedCount ?? 0) + (hDay?.learnedCount ?? 0);
         const isMakeup = isOutOfYear ? false : !!hDay?.isMakeup;
 
-        const activityCount = createdCount + loggedCount + (isMakeup ? 5 : 0);
+        // 真实追踪三大行为：新卡片、复习卡片、开口说卡片
+        const createdCount = isOutOfYear
+          ? 0
+          : Math.max(cardCreatedCount, hDay?.newCards || 0, hDay?.learnedCount || 0);
+        const reviewedCount = isOutOfYear
+          ? 0
+          : Math.max(reviewCountByDate[dStr] || 0, hDay?.reviewedCount || 0, hDay?.reviews || 0);
+        const spokenCount = isOutOfYear
+          ? 0
+          : Math.max(spokenCountByDate[dStr] || 0, hDay?.spokenCount || 0);
+
+        // 仅当当天有新卡片/复习卡片/开口说卡片时才会有数值，颜色深浅根据上述行为多少变化
+        const activityCount = createdCount + reviewedCount + spokenCount + (isMakeup ? 5 : 0);
 
         if (!isOutOfYear) {
           totalCardsInYear += createdCount;
@@ -275,6 +323,8 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
           dayOfWeek: d,
           weekIndex: w,
           createdCount,
+          reviewedCount,
+          spokenCount,
           activityCount,
           cards: dayCards,
           isToday,
@@ -658,9 +708,11 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                                       ? 'ring-2 ring-[#d49e3d] scale-125 z-10 shadow-[0px_0px_6px_#d49e3d]'
                                       : ''
                                   } ${cell.isToday ? 'ring-1.5 ring-emerald-400' : ''}`}
-                                  title={`${cell.dateStr}：入库 ${cell.createdCount} 封 / 动态 ${cell.activityCount} 次${
-                                    cell.isMakeup ? ' (已补签)' : ''
-                                  }`}
+                                  title={`${cell.dateStr}：${
+                                    cell.activityCount === 0
+                                      ? '无学练记录'
+                                      : `新卡 ${cell.createdCount} 封 · 复习 ${cell.reviewedCount} 次 · 开口说 ${cell.spokenCount} 次 (总计 ${cell.activityCount} 次)`
+                                  }${cell.isMakeup ? ' [已补签]' : ''}`}
                                 />
                               );
                             })}
@@ -674,7 +726,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 {/* Heatmap Legend */}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-[10px] font-mono text-stone-600 dark:text-stone-400 pt-1 border-t border-stone-300 dark:border-stone-800">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold">电务频次：</span>
+                    <span className="font-bold">学练频次（新卡/复习/开口说）：</span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-[9px]">空 (0次)</span>
                       <div className="w-2.5 h-2.5 rounded-[2px] bg-transparent border border-stone-400/60 dark:border-stone-700" />
@@ -727,13 +779,23 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-3 text-xs font-mono text-stone-700 dark:text-stone-300">
-                      <span>新增: {selectedDayInfo.createdCount} 封</span>
-                      <span>动态: {selectedDayInfo.activityCount} 次</span>
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-stone-700 dark:text-stone-300">
+                      <span className="px-1.5 py-0.5 bg-stone-200/80 dark:bg-stone-800 rounded-xs">
+                        新卡: {selectedDayInfo.createdCount} 封
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-stone-200/80 dark:bg-stone-800 rounded-xs">
+                        复习: {selectedDayInfo.reviewedCount} 次
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-stone-200/80 dark:bg-stone-800 rounded-xs">
+                        开口说: {selectedDayInfo.spokenCount} 次
+                      </span>
+                      <span className="font-bold text-stone-900 dark:text-[#d49e3d]">
+                        总计: {selectedDayInfo.activityCount} 次
+                      </span>
                     </div>
 
                     {/* Makeup Checkin Button for past inactive day */}
-                    {selectedDayInfo.createdCount === 0 && !selectedDayInfo.isMakeup && !selectedDayInfo.isToday && (
+                    {selectedDayInfo.activityCount === 0 && !selectedDayInfo.isMakeup && !selectedDayInfo.isToday && (
                       <button
                         onClick={() => handleApplyMakeup(selectedDayInfo.dateStr)}
                         className="px-3 py-1.5 rounded-xs bg-[#d49e3d] hover:bg-[#c99333] active:translate-y-0.5 text-stone-900 font-serif-display font-black text-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer whitespace-nowrap transition-all"

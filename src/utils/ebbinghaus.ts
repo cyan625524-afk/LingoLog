@@ -258,12 +258,30 @@ export function calculateStreakFromHeatmap(
       const count = day.count ?? 0;
       const reviews = day.reviews ?? day.reviewedCount ?? 0;
       const learned = day.learnedCount ?? 0;
-      if (count > 0 || reviews > 0 || learned > 0) return true;
+      const spoken = day.spokenCount ?? 0;
+      if (count > 0 || reviews > 0 || learned > 0 || spoken > 0) return true;
     }
+    // 1. 新卡片 (Created)
     if (cards.some((c) => c.createdAt && c.createdAt.slice(0, 10) === dateStr)) {
       return true;
     }
-    if (cards.some((c) => c.lastReviewedAt && c.lastReviewedAt.slice(0, 10) === dateStr)) {
+    // 2. 复习卡片 (Reviewed)
+    if (
+      cards.some((c) => {
+        if (c.lastReviewedAt && c.lastReviewedAt.slice(0, 10) === dateStr) return true;
+        if (Array.isArray(c.reviewHistory) && c.reviewHistory.some((rh) => typeof rh === 'string' && rh.slice(0, 10) === dateStr)) return true;
+        return false;
+      })
+    ) {
+      return true;
+    }
+    // 3. 开口说卡片 (Spoken)
+    if (
+      cards.some((c) => {
+        if (Array.isArray(c.speechRecords) && c.speechRecords.some((sr) => sr.date && sr.date.slice(0, 10) === dateStr)) return true;
+        return false;
+      })
+    ) {
       return true;
     }
     return false;

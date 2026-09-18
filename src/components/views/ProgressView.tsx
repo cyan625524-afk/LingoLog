@@ -18,11 +18,13 @@ import {
   ArrowRight,
   Palette,
   AlertCircle,
+  Trophy,
+  X,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DailyQuest, HeatmapDay, ShopItem, FlashCard } from '../../types';
 import { sound } from '../../utils/audio';
-import { formatDate, calculateStreakFromHeatmap } from '../../utils/ebbinghaus';
+import { formatDate, calculateStreakFromHeatmap, isCardDue } from '../../utils/ebbinghaus';
 import { TelegramStamp } from '../common/TelegramStamp';
 
 interface ProgressViewProps {
@@ -83,6 +85,19 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   const [claimedQuestIds, setClaimedQuestIds] = useState<Set<string>>(new Set());
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
 
+  const [showCelebrationModal, setShowCelebrationModal] = useState(false);
+  const celebrationShownDateRef = useRef<string>('');
+
+  // 2秒后自动退出庆祝弹窗
+  useEffect(() => {
+    if (showCelebrationModal) {
+      const timer = setTimeout(() => {
+        setShowCelebrationModal(false);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [showCelebrationModal]);
+
   const todayStr = useMemo(() => formatDate(new Date()), []);
   const currentYear = useMemo(() => new Date().getFullYear(), []);
 
@@ -93,37 +108,76 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
 
   // 2. Synchronize daily tasks with actual cards & review activities of today
   const syncedQuests = useMemo(() => {
+    // A. 当天新卡片（包括打字机起草与Gemini推送）
     const todayNewCardsCount = cards.filter(
       (c) => c.createdAt && c.createdAt.slice(0, 10) === todayStr
     ).length;
+
+    // B. 当天复审过的电文
     const todayReviewedCardsCount = cards.filter(
-      (c) => c.lastReviewedAt && c.lastReviewedAt.slice(0, 10) === todayStr
+      (c) =>
+        (c.lastReviewedAt && c.lastReviewedAt.slice(0, 10) === todayStr) ||
+        (Array.isArray(c.reviewHistory) &&
+          c.reviewHistory.some((rh) => typeof rh === 'string' && rh.slice(0, 10) === todayStr))
     ).length;
 
-    const todayHeatmapReviewed = heatmap[todayStr]?.reviewedCount || heatmap[todayStr]?.reviews || 0;
+    const todayHeatmapReviewed =
+      heatmap[todayStr]?.reviewedCount || heatmap[todayStr]?.reviews || 0;
     const todayHeatmapLearned = heatmap[todayStr]?.learnedCount || 0;
     const todayHeatmapSpoken = heatmap[todayStr]?.spokenCount || 0;
 
     const actualLearned = Math.max(todayNewCardsCount, todayHeatmapLearned);
     const actualReviewed = Math.max(todayReviewedCardsCount, todayHeatmapReviewed);
     const actualSpoken = todayHeatmapSpoken;
-    const actualFavorite = cards.some((c) => c.isFavorite) ? 1 : 0;
+
+    // C. 动态复核任务目标计算：
+    // 第一次用时，今日复习里的艾宾浩斯可能达不到5张，不足5张的以用户当天加入的为准；
+    // 之后当天复审不足5张的也以用户当天应该复习的为准
+    const currentDueCount = cards.filter((c) => isCardDue(c.nextReviewAt)).length;
+    const totalReviewWorkloadToday = actualReviewed + currentDueCount;
+    let dynamicReviewTarget = 5;
+    if (totalReviewWorkloadToday > 0) {
+      dynamicReviewTarget = Math.min(5, Math.max(1, totalReviewWorkloadToday));
+    } else {
+      const basis = todayNewCardsCount > 0 ? todayNewCardsCount : cards.length;
+      dynamicReviewTarget = Math.min(5, Math.max(1, basis || 1));
+    }
+
+    // D. "机要重点归档":
+    // 只要用户收藏了卡片、掌握了卡片、或者当天有新学/复习/开口说记录，即可轻松达成
+    const hasFavoriteOrMastered = cards.some((c) => c.isFavorite || c.masteryLevel === 'mastered');
+    const hasAnyActivityToday = actualLearned > 0 || actualReviewed > 0 || actualSpoken > 0;
+    const actualFavorite = hasFavoriteOrMastered || hasAnyActivityToday || cards.length > 0 ? 1 : 0;
 
     return quests.map((quest) => {
       let current = quest.current;
+      let target = quest.target;
+      let description = quest.description;
+
       if (quest.id === 'quest-learn' || quest.id === 'quest-1' || quest.id === 'learn_1') {
         current = Math.max(quest.current, actualLearned);
+        target = 1;
+        description = '打字机输入或从AI助手推送至少 1 封新电文';
       } else if (quest.id === 'quest-review' || quest.id === 'quest-2' || quest.id === 'review_5') {
+        target = dynamicReviewTarget;
         current = Math.max(quest.current, actualReviewed);
+        description = `完成今日待核队列（${target} 封）电文复审`;
       } else if (quest.id === 'quest-audio' || quest.id === 'quest-3') {
         current = Math.max(quest.current, actualSpoken);
+        target = Math.min(quest.target, 1);
+        description = '点击电文朗读播报，跟读发音练习 1 次';
       } else if (quest.id === 'quest-favorite' || quest.id === 'quest-4') {
         current = Math.max(quest.current, actualFavorite);
+        target = 1;
+        description = '收藏星标电文，或在卷宗库中翻阅精读 1 封电文';
       }
-      const completed = current >= quest.target;
+
+      const completed = current >= target;
       return {
         ...quest,
         current,
+        target,
+        description,
         completed,
       };
     });
@@ -414,13 +468,32 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
 
   const handleClaim = (quest: DailyQuest) => {
     sound.playSuccess();
-    setClaimedQuestIds((prev) => new Set(prev).add(quest.id));
+    const nextClaimed = new Set(claimedQuestIds).add(quest.id);
+    setClaimedQuestIds(nextClaimed);
     confetti({
       particleCount: 50,
       spread: 60,
       origin: { y: 0.7 },
     });
     onClaimQuest(quest.id);
+
+    // 检查是否当天所有任务均已达成且全部完成领取
+    const allDoneAndClaimed = syncedQuests.every(
+      (q) => (q.completed || q.current >= q.target) && (q.claimed || nextClaimed.has(q.id))
+    );
+
+    if (allDoneAndClaimed && celebrationShownDateRef.current !== todayStr) {
+      celebrationShownDateRef.current = todayStr;
+      setTimeout(() => {
+        setShowCelebrationModal(true);
+        sound.playSuccess();
+        confetti({
+          particleCount: 100,
+          spread: 80,
+          origin: { y: 0.5 },
+        });
+      }, 350);
+    }
   };
 
   const handleApplyMakeup = (dateStr: string) => {
@@ -1192,6 +1265,46 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* 任务全圆满达成庆祝弹窗（点旁边或2秒后自动退出） */}
+      {showCelebrationModal && (
+        <div
+          onClick={() => setShowCelebrationModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/70 backdrop-blur-xs animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-sm bg-[#faf7ee] dark:bg-[#1a251c] rounded-xs border-3 border-stone-900 shadow-[8px_8px_0px_#101711] p-6 text-center space-y-4 animate-in zoom-in-95 duration-200 cursor-default"
+          >
+            <button
+              onClick={() => setShowCelebrationModal(false)}
+              className="absolute top-2.5 right-2.5 p-1 rounded-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-200 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-16 h-16 mx-auto rounded-full bg-[#d49e3d] border-2 border-stone-900 flex items-center justify-center shadow-[3px_3px_0px_#101711] animate-bounce">
+              <Trophy className="w-8 h-8 text-stone-950 fill-stone-950" />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono text-[11px] font-bold border border-emerald-700">
+                ★ 今日值机任务全部圆满达成 ★
+              </div>
+              <h3 className="font-serif-display font-black text-lg sm:text-xl text-stone-900 dark:text-stone-100">
+                全勤值机 · 勋章加冕！
+              </h3>
+              <p className="text-xs font-serif-body text-stone-600 dark:text-stone-300 leading-relaxed">
+                今日所有起草、复核、跟读与机要归档任务均已全部达成，功勋羽毛已尽数收入囊中！
+              </p>
+            </div>
+
+            <div className="text-[10px] font-mono text-stone-400 dark:text-stone-500 pt-2 border-t border-dashed border-stone-300 dark:border-stone-800">
+              点击任意空白处或 2 秒后自动退出
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

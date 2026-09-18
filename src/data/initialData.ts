@@ -81,8 +81,8 @@ export const INITIAL_QUESTS: DailyQuest[] = [
   {
     id: 'quest-learn',
     title: '起草新电报',
-    description: '在打字机拍发并归档至少 2 封新电文',
-    target: 2,
+    description: '打字机拍发或从AI助手推送至少 1 封新电文',
+    target: 1,
     current: 0,
     rewardFeathers: 20,
     completed: false,
@@ -92,7 +92,7 @@ export const INITIAL_QUESTS: DailyQuest[] = [
   {
     id: 'quest-review',
     title: '艾宾浩斯复审',
-    description: '完成今日待核队列中至少 5 封电文复审',
+    description: '完成今日待核队列电文复审',
     target: 5,
     current: 0,
     rewardFeathers: 35,
@@ -103,8 +103,8 @@ export const INITIAL_QUESTS: DailyQuest[] = [
   {
     id: 'quest-audio',
     title: '电波播报跟读',
-    description: '点击电文朗读播报，跟读发音练习 2 次',
-    target: 2,
+    description: '点击电文朗读播报，跟读发音练习 1 次',
+    target: 1,
     current: 0,
     rewardFeathers: 20,
     completed: false,
@@ -114,7 +114,7 @@ export const INITIAL_QUESTS: DailyQuest[] = [
   {
     id: 'quest-favorite',
     title: '机要重点归档',
-    description: '收藏或掌握至少 1 封重点电文卷宗',
+    description: '收藏星标电文，或在卷宗库中翻阅精读 1 封电文',
     target: 1,
     current: 0,
     rewardFeathers: 15,

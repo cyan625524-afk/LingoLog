@@ -323,6 +323,13 @@ export default function App() {
             allNewCards.forEach((c) => uploadSingleCardToCloud(c));
             addFeathers(allNewCards.length * 2);
             recordActivity('learn', 5);
+            setQuests((prev) =>
+              prev.map((q) =>
+                q.id === 'quest-learn' || q.id === 'learn_1' || q.id === 'quest-1'
+                  ? { ...q, current: Math.min(q.target, q.current + allNewCards.length), completed: true }
+                  : q
+              )
+            );
             sound.playSuccess();
           }
         }
@@ -378,9 +385,13 @@ export default function App() {
     addFeathers(5);
     recordActivity('learn', 3);
 
-    // Update quest: learn_1
+    // Update quest: learn
     setQuests((prev) =>
-      prev.map((q) => (q.id === 'learn_1' ? { ...q, current: Math.min(q.target, q.current + 1) } : q))
+      prev.map((q) =>
+        q.id === 'quest-learn' || q.id === 'learn_1' || q.id === 'quest-1'
+          ? { ...q, current: Math.min(q.target, q.current + 1), completed: true }
+          : q
+      )
     );
   };
 
@@ -422,10 +433,12 @@ export default function App() {
     addFeathers(featherReward);
     recordActivity('review', 2);
 
-    // Update quest: review_5
+    // Update quest: review
     setQuests((prev) =>
       prev.map((q) =>
-        q.id === 'review_5' ? { ...q, current: Math.min(q.target, q.current + 1) } : q
+        q.id === 'quest-review' || q.id === 'review_5' || q.id === 'quest-2'
+          ? { ...q, current: q.current + 1, completed: q.current + 1 >= q.target }
+          : q
       )
     );
   };
@@ -564,9 +577,13 @@ export default function App() {
     addFeathers(score >= 80 ? 6 : 3);
     recordActivity('speech', 2);
 
-    // Update quest: speak_1
+    // Update quest: speak / audio
     setQuests((prev) =>
-      prev.map((q) => (q.id === 'speak_1' ? { ...q, current: Math.min(q.target, q.current + 1) } : q))
+      prev.map((q) =>
+        q.id === 'quest-audio' || q.id === 'speak_1' || q.id === 'quest-3'
+          ? { ...q, current: q.current + 1, completed: q.current + 1 >= q.target }
+          : q
+      )
     );
   };
 

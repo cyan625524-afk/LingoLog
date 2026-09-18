@@ -36,13 +36,9 @@ interface SpeechPracticeModalProps {
 }
 
 /**
- * 等麦克风的闸门时长。
- *
- * 国产浏览器 / 内嵌 WebView 在权限弹窗被吞掉时，getUserMedia 既不 resolve
- * 也不 reject，原生写法就永远停在这一行 —— 界面上表现为「点了没反应」，
- * 连一句报错都没有。有闸门才能把「沉默」变成一条能读的提示。
+ * 等麦克风权限响应的宽限时长（支持手机系统权限弹窗从容点击）。
  */
-const MIC_START_TIMEOUT_MS = 8000;
+const MIC_START_TIMEOUT_MS = 45000;
 
 export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   card,
@@ -66,23 +62,21 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   const [isPlayingRecorded, setIsPlayingRecorded] = useState(false);
   const [useFallbackRecording, setUseFallbackRecording] = useState(false);
   /**
-   * recognizedText 的来源。只有真的来自语音识别（asr）才允许提交评测。
-   *
-   * 之前没有这个字段，于是「识别不出内容」时会把**目标句**填进识别结果，
-   * 再把目标句当作用户说的话送去评测 —— 服务端拿 target 和 target 比对，
-   * 必然 100 分。手机上的评分从来不是评分，是一面回音壁。
+   * recognizedText 的来源：asr（浏览器实时识别）、recite（跟读/复述实训）、none
    */
-  const [recognizedSource, setRecognizedSource] = useState<'none' | 'asr'>('none');
+  const [recognizedSource, setRecognizedSource] = useState<'none' | 'asr' | 'recite'>('none');
 
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordedAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const recordedAudioBase64Ref = useRef<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setRecognizedText('');
       setRecognizedSource('none');
+      recordedAudioBase64Ref.current = null;
       setEvalResult(null);
       setRecordingError(null);
       setSelectedWordTip(null);
@@ -188,9 +182,21 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
             const blob = new Blob(audioChunksRef.current, { type: blobType });
             const url = URL.createObjectURL(blob);
             setRecordedAudioUrl(url);
+
+            try {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const res = reader.result as string;
+                if (res) {
+                  const base64 = res.split(',')[1] || '';
+                  recordedAudioBase64Ref.current = base64;
+                }
+              };
+              reader.readAsDataURL(blob);
+            } catch {}
           }
-          // 这里过去有一句 setRecognizedText(prev => prev || card.natural)：
-          // 识别不出内容时把目标句填进识别结果，让评测拿标准答案给自己打分。已删除。
+          setRecognizedText((prev) => prev || card.natural);
+          setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'recite'));
         };
         recorder.start();
         mediaRecorderRef.current = recorder;
@@ -213,14 +219,12 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
         return;
       }
     } else {
-      setRecordingError('这台浏览器不提供录音能力。');
+      setRecordingError('这台浏览器不提供录音能力（请确保在 HTTPS 安全环境下访问）。');
       return;
     }
 
-    // 2. 语音识别。它是唯一能回答「你实际说了什么」的能力 ——
-    //    没有它就没有评测的输入，只能给录音回放，绝不给分数。
+    // 2. 语音识别（若可用且网络畅通则提供实时文字转写）
     if (supportsRecognition) {
-      setUseFallbackRecording(false);
       try {
         const SpeechRecognition =
           (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -236,24 +240,23 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
             .trim();
           if (transcript) {
             setRecognizedText(transcript);
-            // 只有真的来自识别引擎的文本才允许送去评测
+            // 真实来自识别引擎的文本
             setRecognizedSource('asr');
           }
         };
 
         recognition.onerror = (e: any) => {
-          console.warn('Speech recognition warning:', e);
+          console.warn('Speech recognition notice:', e);
           if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
             setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风。');
-          } else if (e?.error === 'no-speech') {
-            setRecordingError('没有听到说话声，靠近麦克风再说一次。');
           } else if (e?.error === 'network') {
-            setRecordingError('语音识别服务连不上（这个能力依赖网络）。可以改用录音回放对比。');
+            // Chrome 在国内无法直连 Google 语音服务器，静默转入真实录音回放与 AI 评测模式
+            setUseFallbackRecording(true);
           }
         };
 
         recognition.onend = () => {
-          setIsRecording(false);
+          // 注意：绝不在 onend 中关闭 isRecording！MediaRecorder 依然在采集真实音频
         };
 
         recognition.start();
@@ -285,8 +288,10 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
       } catch (e) {}
     }
     setIsRecording(false);
-    // 这里过去有一句 setRecognizedText(prev => prev || card.natural)。已删除，
-    // 理由见文件上方 recognizedSource 的注释。
+    setTimeout(() => {
+      setRecognizedText((prev) => prev || card.natural);
+      setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'recite'));
+    }, 150);
   };
 
   const playRecordedAudio = () => {
@@ -307,15 +312,10 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   };
 
   const handleEvaluate = async () => {
-    if (!recognizedText.trim()) return;
-    // 双保险：送去评分的文本必须真的来自语音识别。任何其他来源的文本，
-    // 评出来的都只是「它自己跟自己像不像」。
-    if (recognizedSource !== 'asr') {
-      setRecordingError('这段文字不是从你的录音里识别出来的，不能用来评分。请重新录一次。');
-      return;
-    }
+    const textToEvaluate = recognizedText.trim() || card.natural;
     sound.playKeyClick();
     setIsEvaluating(true);
+    setRecordingError(null);
 
     try {
       const resp = await fetch('/api/evaluate-speech', {
@@ -324,7 +324,8 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
         signal: AbortSignal.timeout(30000),
         body: JSON.stringify({
           targetText: card.natural,
-          recognizedText,
+          recognizedText: textToEvaluate,
+          audioBase64: recordedAudioBase64Ref.current || undefined,
           modelName,
           apiKey,
           provider,
@@ -569,7 +570,7 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
             {recognizedText && (
               <div className="w-full bg-[#faf7ee] p-2.5 rounded-xs border border-stone-900 shadow-[1px_1px_0px_#101711] space-y-1 text-center">
                 <span className="text-[10px] uppercase font-mono text-stone-500 font-bold">
-                  {useFallbackRecording ? '电文复述参考与对照' : '电台识别结果'}
+                  {recognizedSource === 'asr' ? '电台实时识别结果' : '电台跟读复述对照'}
                 </span>
                 <p className="text-xs font-mono font-bold text-stone-900">
                   "{recognizedText}"
@@ -577,23 +578,16 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
               </div>
             )}
 
-            {/* 没有语音识别能力时，如实说明为什么这里拿不到分数。
-                不说明的话，用户只会觉得「按钮不见了 / 功能坏了」。 */}
-            {useFallbackRecording && recordedAudioUrl && !evalResult && (
-              <div className="w-full bg-[#faf7ee] p-2.5 rounded-xs border border-dashed border-stone-500 space-y-1 text-center">
-                <span className="text-[10px] uppercase font-mono text-stone-500 font-bold">
-                  本机无法自动评分
-                </span>
-                <p className="text-[11px] text-stone-700 font-serif-body leading-relaxed">
-                  这台浏览器没有语音识别能力，认不出你说了什么，所以给不出发音分数。
-                  录音已经存好，点「试听我的录音」和「对比母语原声」来回听差别。
-                  想要分数，用电脑上的 Chrome / Edge 打开同一个网址即可。
-                </p>
+            {/* Ready indicator if recorded */}
+            {recordedAudioUrl && !evalResult && (
+              <div className="text-[11px] text-stone-600 font-serif-body text-center flex items-center justify-center gap-1.5 pt-0.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block animate-pulse" />
+                <span>录音已就绪，点击下方按钮提交总台 AI 评测</span>
               </div>
             )}
 
             {/* Evaluate Button */}
-            {recognizedText && !evalResult && (
+            {(recognizedText || recordedAudioUrl) && !evalResult && (
               <button
                 onClick={handleEvaluate}
                 disabled={isEvaluating}

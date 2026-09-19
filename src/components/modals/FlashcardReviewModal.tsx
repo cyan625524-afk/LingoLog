@@ -9,7 +9,9 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
-  RotateCcw,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -59,9 +61,12 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   const [recallEvaluation, setRecallEvaluation] = useState<RecallEvaluation | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
+  // 详细解析折叠状态（手机端默认折叠，防止卡片被撑得过长）
+  const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
+
   const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const isRecordingRef = useRef(false);
+  const recognizedTextRef = useRef('');
 
   // Chronological order map (earliest added = No.001)
   const cardChronologicalMap = useMemo(() => {
@@ -78,13 +83,16 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
 
   // 重置单张卡片的交互状态
   const resetCardState = () => {
-    stopCurrentAudioTracks();
+    stopCurrentRecognition();
     setIsRecording(false);
+    isRecordingRef.current = false;
     setRecognizedText('');
+    recognizedTextRef.current = '';
     setIsEvaluated(false);
     setIsRevealedDirectly(false);
     setRecallEvaluation(null);
     setRecordingError(null);
+    setIsExplanationExpanded(false);
   };
 
   // 模态框打开或卡片数组变化
@@ -95,7 +103,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
       setReviewedCount(0);
       resetCardState();
     } else {
-      stopCurrentAudioTracks();
+      stopCurrentRecognition();
     }
   }, [isOpen, cards]);
 
@@ -106,122 +114,112 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     }
   }, [isOpen, currentCard]);
 
-  // 停止录音与清理音轨
-  const stopCurrentAudioTracks = () => {
+  // 停止语音识别并清理
+  const stopCurrentRecognition = () => {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
       } catch {}
       recognitionRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      mediaRecorderRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-    }
+    isRecordingRef.current = false;
   };
 
   // 组件卸载时释放资源
   useEffect(() => {
     return () => {
-      stopCurrentAudioTracks();
+      stopCurrentRecognition();
     };
   }, []);
 
-  // 启动录音与 ASR（零运行时 AI，浏览器本地 SpeechRecognition + MediaStream）
-  const startRecording = async () => {
+  /**
+   * 启动 ASR 语音识别
+   * 针对手机端（Edge/Chrome/Safari）的关键优化：
+   * 1. 绝不同时调用 getUserMedia，避免手机 OS 底层音频硬件被互斥占用导致 ASR 静默失败。
+   * 2. continuous 设置为 false（移动端标准规范），自然支持停顿自动断句。
+   * 3. 及时更新 ref，防止闭包在 onend 时丢失识别文本。
+   */
+  const startRecording = () => {
     if (!currentCard) return;
     sound.playKeyClick();
     setRecordingError(null);
     setRecognizedText('');
+    recognizedTextRef.current = '';
 
-    const hasRecognition =
-      typeof window !== 'undefined' &&
-      ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-    // 1. 获取麦克风权限
-    let stream: MediaStream | null = null;
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaStreamRef.current = stream;
-      }
-    } catch (err: any) {
-      console.warn('Microphone permission error:', err);
-      const errName = String(err?.name || '');
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        setRecordingError('麦克风权限被拒绝，请在手机或浏览器设置中开启本站麦克风权限。');
-      } else {
-        setRecordingError('未能连接麦克风，可检查设备或直接点击「直接看答案」。');
-      }
+    if (!SpeechRecognition) {
+      setRecordingError('当前浏览器不支持网页语音识别（SpeechRecognition），可直接看答案。');
       return;
     }
 
-    // 2. 启动语音识别
-    if (hasRecognition) {
-      try {
-        const SpeechRecognition =
-          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.continuous = true;
-        recognition.interimResults = true;
+    try {
+      stopCurrentRecognition();
 
-        recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((r: any) => r[0].transcript)
-            .join(' ')
-            .trim();
-          if (transcript) {
-            setRecognizedText(transcript);
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = false; // 手机端必须为 false，避免移动端引擎直接异常中断
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+        isRecordingRef.current = true;
+      };
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0]?.transcript || '';
+        }
+        transcript = transcript.trim();
+        if (transcript) {
+          setRecognizedText(transcript);
+          recognizedTextRef.current = transcript;
+        }
+      };
+
+      recognition.onerror = (e: any) => {
+        console.warn('SpeechRecognition notice:', e);
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          setRecordingError('麦克风权限被拒绝，请在手机系统或浏览器地址栏设置中允许麦克风权限。');
+        } else if (e.error === 'network') {
+          setRecordingError('语音识别网络连接超时，请检查网络或点击「直接看答案」。');
+        }
+      };
+
+      recognition.onend = () => {
+        // 手机端在说完一句话后会自动触发 onend
+        if (isRecordingRef.current) {
+          setIsRecording(false);
+          isRecordingRef.current = false;
+          // 若已识别到有效内容，自动顺畅过渡到评测阶段
+          if (recognizedTextRef.current.trim().length >= 2) {
+            evaluateSpokenText(recognizedTextRef.current.trim());
           }
-        };
+        }
+      };
 
-        recognition.onerror = (e: any) => {
-          console.warn('Recognition notice:', e);
-          if (e?.error === 'not-allowed') {
-            setRecordingError('麦克风权限未授予。');
-          }
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-      } catch (err) {
-        console.warn('SpeechRecognition failed to init:', err);
-      }
+      recognition.start();
+      recognitionRef.current = recognition;
+      setIsRecording(true);
+      isRecordingRef.current = true;
+    } catch (err: any) {
+      console.warn('SpeechRecognition failed to start:', err);
+      setRecordingError('启动麦克风失败，请确认允许浏览器麦克风权限。');
+      setIsRecording(false);
+      isRecordingRef.current = false;
     }
-
-    // 3. 启动 MediaRecorder 保持音频上下文活跃
-    if (stream && typeof MediaRecorder !== 'undefined') {
-      try {
-        const recorder = new MediaRecorder(stream);
-        recorder.start();
-        mediaRecorderRef.current = recorder;
-      } catch {}
-    }
-
-    setIsRecording(true);
   };
 
-  // 结束录音并执行本地提取判定
-  const stopRecordingAndEvaluate = (textOverride?: string) => {
-    sound.playKeyClick();
-    stopCurrentAudioTracks();
-    setIsRecording(false);
-
-    const finalText = (textOverride !== undefined ? textOverride : recognizedText).trim();
-
+  // 纯前端本地判定逻辑
+  const evaluateSpokenText = (textToEvaluate: string) => {
     if (!currentCard) return;
 
-    // 纯前端本地判定，零 API 调用
     const evaluation = evaluateRecall(
       currentCard.natural,
-      finalText,
+      textToEvaluate,
       currentCard.variants,
       currentMode === 'transfer'
     );
@@ -237,11 +235,27 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     }
   };
 
-  // 用户未开口，直接看答案（强制标记为 revealed，只能记为未掌握）
+  // 手动点击「完成说并提交判定」
+  const stopRecordingAndEvaluate = () => {
+    sound.playKeyClick();
+    isRecordingRef.current = false;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      recognitionRef.current = null;
+    }
+    setIsRecording(false);
+
+    evaluateSpokenText(recognizedTextRef.current);
+  };
+
+  // 用户未开口直接看答案（严格标记为 revealed，仅允许选择 AGAIN）
   const handleRevealDirectly = () => {
     sound.playCardFlip();
-    stopCurrentAudioTracks();
+    stopCurrentRecognition();
     setIsRecording(false);
+    isRecordingRef.current = false;
     setIsRevealedDirectly(true);
     setIsEvaluated(true);
     setRecallEvaluation({
@@ -253,12 +267,19 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     });
   };
 
+  // 方案 A：系统根据客观提取判定，自适应计算推荐评级
+  const recommendedRating: ReviewRating = useMemo(() => {
+    if (isRevealedDirectly) return 'again';
+    if (recallEvaluation?.result === 'pass') return 'good';
+    if (recallEvaluation?.result === 'partial') return 'hard';
+    return 'again';
+  }, [isRevealedDirectly, recallEvaluation]);
+
   // 快捷键支持
   useEffect(() => {
     if (!isOpen || isFinished) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 避免在输入框触发
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (targetTag === 'input' || targetTag === 'textarea') return;
 
@@ -269,8 +290,8 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
         return;
       }
 
-      // 空格键：在未评测时用于「开始说」/「完成说」
-      if (e.key === ' ' || e.code === 'Space') {
+      // 空格键 / 回车键
+      if (e.key === ' ' || e.code === 'Space' || e.key === 'Enter') {
         e.preventDefault();
         if (!isEvaluated) {
           if (!isRecording) {
@@ -278,11 +299,14 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
           } else {
             stopRecordingAndEvaluate();
           }
+        } else {
+          // 判定完成后，按空格或回车直接采纳系统推荐的评级进入下一张！
+          handleRate(recommendedRating);
         }
         return;
       }
 
-      // 评级快捷键 1~4（仅在完成提取或翻面后生效）
+      // 评级快捷键 1~4
       if (isEvaluated) {
         if (e.key === '1') handleRate('again');
         else if (e.key === '2' && !isRevealedDirectly) handleRate('hard');
@@ -305,8 +329,8 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     isEvaluated,
     isRecording,
     isRevealedDirectly,
+    recommendedRating,
     historyStack,
-    recognizedText,
   ]);
 
   if (!isOpen) return null;
@@ -460,36 +484,36 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                     </div>
                     {currentMode === 'transfer' && (
                       <div className="text-xs text-stone-600 font-serif italic">
-                        原句情景参考：{currentCard.original}
+                        原句背景参考：{currentCard.original}
                       </div>
                     )}
                   </div>
 
                   {/* Step 2 & 3: Extraction Area (Think + Record) */}
                   {!isEvaluated ? (
-                    <div className="space-y-4 pt-2">
-                      <div className="p-3.5 bg-[#faf7ee] rounded-xs border border-stone-400/80 text-stone-700 space-y-2">
+                    <div className="space-y-3.5 pt-1">
+                      <div className="p-3 bg-[#faf7ee] rounded-xs border border-stone-400/80 text-stone-700 space-y-1.5">
                         <div className="flex items-center gap-2 text-xs font-mono font-bold text-stone-800 uppercase tracking-wider">
                           <Sparkles className="w-3.5 h-3.5 text-[#d49e3d]" />
                           <span>Think of the English</span>
                         </div>
                         <p className="text-xs font-serif leading-relaxed text-stone-600">
-                          请在脑中检索该表达，点击下方按钮大声说出英文。系统将通过本地词汇覆盖率算法判定提取准确度。
+                          请在脑中检索该英文表达，点击下方按钮大声说出。手机端说完会自动断句提交。
                         </p>
                       </div>
 
                       {/* Recording status & Live speech transcript */}
                       {isRecording && (
-                        <div className="p-3.5 bg-[#182319] border-2 border-stone-900 rounded-xs text-stone-100 space-y-2 shadow-inner">
+                        <div className="p-3 bg-[#182319] border-2 border-stone-900 rounded-xs text-stone-100 space-y-2 shadow-inner animate-in fade-in duration-150">
                           <div className="flex items-center justify-between text-xs font-mono">
                             <div className="flex items-center gap-2 text-[#d49e3d]">
                               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
-                              <span className="font-bold">正在录音与实时识别...</span>
+                              <span className="font-bold">正在倾听你的英文口语...</span>
                             </div>
-                            <span className="text-stone-400 text-[11px]">按空格或点击下方完成</span>
+                            <span className="text-stone-400 text-[11px]">说完自动或点击完成</span>
                           </div>
-                          <div className="font-serif-display text-base text-stone-200 min-h-[36px] italic">
-                            {recognizedText ? `"${recognizedText}"` : '等待开口发音...'}
+                          <div className="font-serif-display text-base text-stone-100 min-h-[32px] italic">
+                            {recognizedText ? `"${recognizedText}"` : '请开口说出英文...'}
                           </div>
                         </div>
                       )}
@@ -501,13 +525,13 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                           <div className="space-y-1">
                             <div>{recordingError}</div>
                             <div className="text-[11px] text-amber-700">
-                              提示：您仍可以直接点击下方的「直接看答案」继续复习流程。
+                              若多次无法开启麦克风，可直接点击下方的「直接看答案」。
                             </div>
                           </div>
                         </div>
                       )}
 
-                      {/* Main Action Buttons: Start / Stop Speaking */}
+                      {/* Action Buttons: Start / Stop Speaking */}
                       <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
                         {!isRecording ? (
                           <button
@@ -519,11 +543,11 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                           </button>
                         ) : (
                           <button
-                            onClick={() => stopRecordingAndEvaluate()}
+                            onClick={stopRecordingAndEvaluate}
                             className="w-full sm:flex-1 py-3 bg-[#99332e] hover:bg-[#a83833] active:translate-y-0.5 text-white border-2 border-stone-900 rounded-xs font-serif-display font-black text-sm shadow-[3px_3px_0px_#101711] cursor-pointer flex items-center justify-center gap-2 transition-all animate-pulse"
                           >
                             <Square className="w-4 h-4 fill-current" />
-                            <span>完成说并提交判定 (空格)</span>
+                            <span>完成说并提交判定</span>
                           </button>
                         )}
 
@@ -540,18 +564,18 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                     </div>
                   ) : (
                     /* Step 4: Evaluated Answer Surface */
-                    <div className="space-y-4 animate-in fade-in duration-150">
-                      <div className="border-t border-dashed border-stone-400 my-2" />
+                    <div className="space-y-3.5 animate-in fade-in duration-150">
+                      <div className="border-t border-dashed border-stone-400 my-1" />
 
                       {/* Direct Reveal Warning Badge */}
                       {isRevealedDirectly ? (
                         <div className="p-2.5 bg-[#fbf0ed] border border-[#99332e]/50 rounded-xs text-[#99332e] text-xs flex items-center gap-2 font-mono">
                           <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span>未开口直接看答案：本轮记为未掌握 (Revealed)，不计入成功次数。</span>
+                          <span>未开口直接看答案：记为未掌握 (Revealed)，仅可选择「没记住 (AGAIN)」。</span>
                         </div>
                       ) : (
                         /* Retrieval & Pronunciation Scoring Result Banner */
-                        <div className="p-3 bg-[#243427] border-2 border-stone-900 rounded-xs text-stone-100 space-y-2">
+                        <div className="p-3 bg-[#243427] border-2 border-stone-900 rounded-xs text-stone-100 space-y-1.5">
                           <div className="flex items-center justify-between text-xs border-b border-stone-700 pb-1.5 flex-wrap gap-1">
                             <div className="flex items-center gap-2">
                               <span className="font-mono text-[11px] text-stone-400">提取判定：</span>
@@ -591,7 +615,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                       )}
 
                       {/* Standard Natural English Expression */}
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <span className="font-mono text-[11px] text-stone-500 uppercase tracking-wider font-bold">
                           地道母语表达 (Standard Target)
                         </span>
@@ -602,9 +626,9 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
 
                       {/* Register Variants (Casual / Formal) if available */}
                       {(currentCard.variants?.casual || currentCard.variants?.formal) && (
-                        <div className="flex flex-wrap gap-2 text-xs pt-1">
+                        <div className="flex flex-wrap gap-2 text-xs pt-0.5">
                           {currentCard.variants?.casual && (
-                            <div className="p-2 bg-[#faf7ee] rounded-xs border border-stone-300 flex items-center gap-1.5">
+                            <div className="p-1.5 bg-[#faf7ee] rounded-xs border border-stone-300 flex items-center gap-1.5">
                               <span className="font-mono text-[10px] bg-stone-200 px-1.5 py-0.5 rounded-xs font-bold">
                                 口语
                               </span>
@@ -612,7 +636,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                             </div>
                           )}
                           {currentCard.variants?.formal && (
-                            <div className="p-2 bg-[#faf7ee] rounded-xs border border-stone-300 flex items-center gap-1.5">
+                            <div className="p-1.5 bg-[#faf7ee] rounded-xs border border-stone-300 flex items-center gap-1.5">
                               <span className="font-mono text-[10px] bg-stone-200 px-1.5 py-0.5 rounded-xs font-bold">
                                 书面
                               </span>
@@ -622,10 +646,37 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                         </div>
                       )}
 
-                      {/* Explanation Markdown */}
+                      {/* Explanation Markdown (默认折叠，防止手机端过长) */}
                       {currentCard.explanation && (
-                        <div className="text-xs text-stone-700 font-serif leading-relaxed bg-[#faf7ee] p-3.5 rounded-xs border border-stone-400/80 max-h-[30vh] overflow-y-auto">
-                          <MarkdownRenderer content={currentCard.explanation} />
+                        <div className="pt-1">
+                          <button
+                            onClick={() => setIsExplanationExpanded((prev) => !prev)}
+                            className="w-full py-2 px-3 bg-[#faf7ee] hover:bg-white text-stone-800 border border-stone-400/80 rounded-xs font-serif-display font-bold text-xs flex items-center justify-between cursor-pointer transition-colors shadow-xs"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <BookOpen className="w-3.5 h-3.5 text-[#d49e3d]" />
+                              <span>深度知识解析与母语建议</span>
+                            </span>
+                            <span className="font-mono text-[11px] text-stone-600 flex items-center gap-0.5">
+                              {isExplanationExpanded ? (
+                                <>
+                                  <span>收起</span>
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                </>
+                              ) : (
+                                <>
+                                  <span>展开查看</span>
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                </>
+                              )}
+                            </span>
+                          </button>
+
+                          {isExplanationExpanded && (
+                            <div className="mt-2 text-xs text-stone-700 font-serif leading-relaxed bg-[#faf7ee] p-3.5 rounded-xs border border-stone-400/80 max-h-[32vh] overflow-y-auto animate-in fade-in duration-150">
+                              <MarkdownRenderer content={currentCard.explanation} />
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -642,127 +693,184 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
             </div>
 
             {/* Bottom Controls (Pinned) */}
-            <div className="px-3 sm:px-6 py-2.5 sm:py-3.5 bg-[#182319] border-t-2 border-stone-900 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.2)]">
-              {/* Left Undo Button */}
-              <div className="flex items-center justify-between sm:justify-start gap-2">
-                <button
-                  onClick={handleUndo}
-                  disabled={historyStack.length === 0}
-                  className="bg-[#243427] hover:bg-[#304434] disabled:opacity-40 text-stone-300 font-serif-display font-bold text-xs py-1.5 sm:py-2 px-3 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] flex items-center gap-1.5 cursor-pointer transition-all disabled:cursor-not-allowed"
-                >
-                  <Undo2 className="w-3.5 h-3.5" />
-                  <span>撤销 (Z)</span>
-                </button>
-
-                <div className="sm:hidden flex items-center gap-1 font-mono text-[11px] text-[#d49e3d] font-bold">
-                  <span>❖ +2🪶</span>
+            <div className="px-3 sm:px-6 py-2 sm:py-3 bg-[#182319] border-t-2 border-stone-900 shrink-0 flex flex-col gap-2 shadow-[0_-4px_12px_rgba(0,0,0,0.2)]">
+              {/* Option A: 系统推荐操作引导条（判定完成后出现） */}
+              {isEvaluated && (
+                <div className="flex items-center justify-between text-[11px] font-mono text-stone-300 bg-[#243427] px-2.5 py-1 rounded-xs border border-stone-800">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#d49e3d] animate-pulse" />
+                    <span>
+                      系统推荐：
+                      <span className="text-[#d49e3d] font-bold uppercase">
+                        {recommendedRating === 'good' && 'GOOD (提取成功)'}
+                        {recommendedRating === 'hard' && 'HARD (有点难)'}
+                        {recommendedRating === 'again' && 'AGAIN (没记住)'}
+                      </span>
+                      ，按 <kbd className="bg-stone-800 px-1 py-0.2 rounded-xs border border-stone-700">空格</kbd> 或 <kbd className="bg-stone-800 px-1 py-0.2 rounded-xs border border-stone-700">回车</kbd> 确认
+                    </span>
+                  </div>
+                  <span className="hidden sm:inline text-stone-400 text-[10px]">可点击其它旋钮自主微调</span>
                 </div>
-              </div>
+              )}
 
-              {/* 4 Rotary Telegraph Dials */}
-              <div className="grid grid-cols-4 gap-1.5 sm:gap-3 flex-1 max-w-sm sm:max-w-md mx-auto sm:mx-0">
-                {/* 1. AGAIN (始终可用，直接看答案时唯一可选评级) */}
-                <button
-                  onClick={() => handleRate('again')}
-                  disabled={!isEvaluated}
-                  className={`flex flex-col items-center group cursor-pointer transition-all ${
-                    !isEvaluated ? 'opacity-30 cursor-not-allowed' : ''
-                  }`}
-                  title="快捷键: 1"
-                >
-                  <div
-                    className={`telegraph-dial-knob group-hover:scale-105 transition-transform ${
-                      isEvaluated && (isRevealedDirectly || recallEvaluation?.result === 'fail')
-                        ? 'ring-2 ring-[#99332e] shadow-[0_0_8px_#99332e]/50'
-                        : ''
-                    }`}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                {/* Left Undo Button */}
+                <div className="flex items-center justify-between sm:justify-start gap-2">
+                  <button
+                    onClick={handleUndo}
+                    disabled={historyStack.length === 0}
+                    className="bg-[#243427] hover:bg-[#304434] disabled:opacity-40 text-stone-300 font-serif-display font-bold text-xs py-1.5 sm:py-2 px-3 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] flex items-center gap-1.5 cursor-pointer transition-all disabled:cursor-not-allowed"
                   >
-                    <div className="telegraph-dial-slit -rotate-45" />
-                  </div>
-                  <span className="font-mono text-[9px] sm:text-[10px] font-bold text-stone-300 mt-1">
-                    AGAIN
-                  </span>
-                  <span className="font-serif text-[10px] sm:text-[11px] text-stone-400 whitespace-nowrap">
-                    没记住 · 1
-                  </span>
-                </button>
+                    <Undo2 className="w-3.5 h-3.5" />
+                    <span>撤销 (Z)</span>
+                  </button>
 
-                {/* 2. HARD (直接看答案时禁用) */}
-                <button
-                  onClick={() => handleRate('hard')}
-                  disabled={!isEvaluated || isRevealedDirectly}
-                  className={`flex flex-col items-center group cursor-pointer transition-all ${
-                    !isEvaluated || isRevealedDirectly ? 'opacity-30 cursor-not-allowed' : ''
-                  }`}
-                  title="快捷键: 2"
-                >
-                  <div
-                    className={`telegraph-dial-knob group-hover:scale-105 transition-transform ${
-                      isEvaluated && !isRevealedDirectly && recallEvaluation?.result === 'partial'
-                        ? 'ring-2 ring-[#d49e3d] shadow-[0_0_8px_#d49e3d]/50'
-                        : ''
+                  <div className="sm:hidden flex items-center gap-1 font-mono text-[11px] text-[#d49e3d] font-bold">
+                    <span>❖ +2🪶</span>
+                  </div>
+                </div>
+
+                {/* 4 Rotary Telegraph Dials (Option A: 动态智能高亮推荐) */}
+                <div className="grid grid-cols-4 gap-1.5 sm:gap-3 flex-1 max-w-sm sm:max-w-md mx-auto sm:mx-0">
+                  {/* 1. AGAIN */}
+                  <button
+                    onClick={() => handleRate('again')}
+                    disabled={!isEvaluated}
+                    className={`flex flex-col items-center group cursor-pointer transition-all ${
+                      !isEvaluated ? 'opacity-30 cursor-not-allowed' : ''
                     }`}
+                    title="快捷键: 1"
                   >
-                    <div className="telegraph-dial-slit -rotate-15" />
-                  </div>
-                  <span className="font-mono text-[9px] sm:text-[10px] font-bold text-stone-300 mt-1">
-                    HARD
-                  </span>
-                  <span className="font-serif text-[10px] sm:text-[11px] text-stone-400 whitespace-nowrap">
-                    有点难 · 2
-                  </span>
-                </button>
+                    <div
+                      className={`telegraph-dial-knob group-hover:scale-105 transition-transform ${
+                        isEvaluated && recommendedRating === 'again'
+                          ? 'ring-2 ring-[#99332e] shadow-[0_0_10px_#99332e]/60 scale-105'
+                          : ''
+                      }`}
+                    >
+                      <div className="telegraph-dial-slit -rotate-45" />
+                    </div>
+                    <span
+                      className={`font-mono text-[9px] sm:text-[10px] font-bold mt-1 ${
+                        isEvaluated && recommendedRating === 'again'
+                          ? 'text-[#e57373]'
+                          : 'text-stone-300'
+                      }`}
+                    >
+                      AGAIN
+                    </span>
+                    <span
+                      className={`font-serif text-[10px] sm:text-[11px] whitespace-nowrap ${
+                        isEvaluated && recommendedRating === 'again'
+                          ? 'text-[#e57373] font-bold'
+                          : 'text-stone-400'
+                      }`}
+                    >
+                      {isEvaluated && recommendedRating === 'again' ? '★ 推荐 · 1' : '没记住 · 1'}
+                    </span>
+                  </button>
 
-                {/* 3. GOOD (直接看答案时禁用，pass 时推荐) */}
-                <button
-                  onClick={() => handleRate('good')}
-                  disabled={!isEvaluated || isRevealedDirectly}
-                  className={`flex flex-col items-center group cursor-pointer transition-all ${
-                    !isEvaluated || isRevealedDirectly ? 'opacity-30 cursor-not-allowed' : ''
-                  }`}
-                  title="快捷键: 3"
-                >
-                  <div
-                    className={`telegraph-dial-knob group-hover:scale-105 transition-transform ${
-                      isEvaluated && !isRevealedDirectly && recallEvaluation?.result === 'pass'
-                        ? 'ring-2 ring-[#d49e3d] shadow-[0_0_10px_#d49e3d]/40'
-                        : ''
+                  {/* 2. HARD */}
+                  <button
+                    onClick={() => handleRate('hard')}
+                    disabled={!isEvaluated || isRevealedDirectly}
+                    className={`flex flex-col items-center group cursor-pointer transition-all ${
+                      !isEvaluated || isRevealedDirectly ? 'opacity-30 cursor-not-allowed' : ''
                     }`}
+                    title="快捷键: 2"
                   >
-                    <div className="telegraph-dial-slit rotate-20" />
-                  </div>
-                  <span className="font-mono text-[9px] sm:text-[10px] font-bold text-[#d49e3d] mt-1">
-                    GOOD
-                  </span>
-                  <span className="font-serif text-[10px] sm:text-[11px] text-[#d49e3d] font-bold whitespace-nowrap">
-                    提取成功 · 3
-                  </span>
-                </button>
+                    <div
+                      className={`telegraph-dial-knob group-hover:scale-105 transition-transform ${
+                        isEvaluated && recommendedRating === 'hard'
+                          ? 'ring-2 ring-[#d49e3d] shadow-[0_0_10px_#d49e3d]/60 scale-105'
+                          : ''
+                      }`}
+                    >
+                      <div className="telegraph-dial-slit -rotate-15" />
+                    </div>
+                    <span
+                      className={`font-mono text-[9px] sm:text-[10px] font-bold mt-1 ${
+                        isEvaluated && recommendedRating === 'hard'
+                          ? 'text-[#d49e3d]'
+                          : 'text-stone-300'
+                      }`}
+                    >
+                      HARD
+                    </span>
+                    <span
+                      className={`font-serif text-[10px] sm:text-[11px] whitespace-nowrap ${
+                        isEvaluated && recommendedRating === 'hard'
+                          ? 'text-[#d49e3d] font-bold'
+                          : 'text-stone-400'
+                      }`}
+                    >
+                      {isEvaluated && recommendedRating === 'hard' ? '★ 推荐 · 2' : '有点难 · 2'}
+                    </span>
+                  </button>
 
-                {/* 4. EASY (直接看答案时禁用) */}
-                <button
-                  onClick={() => handleRate('easy')}
-                  disabled={!isEvaluated || isRevealedDirectly}
-                  className={`flex flex-col items-center group cursor-pointer transition-all ${
-                    !isEvaluated || isRevealedDirectly ? 'opacity-30 cursor-not-allowed' : ''
-                  }`}
-                  title="快捷键: 4"
-                >
-                  <div className="telegraph-dial-knob group-hover:scale-105 transition-transform">
-                    <div className="telegraph-dial-slit rotate-60" />
-                  </div>
-                  <span className="font-mono text-[9px] sm:text-[10px] font-bold text-stone-300 mt-1">
-                    EASY
-                  </span>
-                  <span className="font-serif text-[10px] sm:text-[11px] text-stone-400 whitespace-nowrap">
-                    太简单 · 4
-                  </span>
-                </button>
-              </div>
+                  {/* 3. GOOD */}
+                  <button
+                    onClick={() => handleRate('good')}
+                    disabled={!isEvaluated || isRevealedDirectly}
+                    className={`flex flex-col items-center group cursor-pointer transition-all ${
+                      !isEvaluated || isRevealedDirectly ? 'opacity-30 cursor-not-allowed' : ''
+                    }`}
+                    title="快捷键: 3"
+                  >
+                    <div
+                      className={`telegraph-dial-knob group-hover:scale-105 transition-transform ${
+                        isEvaluated && recommendedRating === 'good'
+                          ? 'ring-2 ring-[#2a834f] shadow-[0_0_10px_#2a834f]/60 scale-105'
+                          : ''
+                      }`}
+                    >
+                      <div className="telegraph-dial-slit rotate-20" />
+                    </div>
+                    <span
+                      className={`font-mono text-[9px] sm:text-[10px] font-bold mt-1 ${
+                        isEvaluated && recommendedRating === 'good'
+                          ? 'text-[#4ade80]'
+                          : 'text-stone-300'
+                      }`}
+                    >
+                      GOOD
+                    </span>
+                    <span
+                      className={`font-serif text-[10px] sm:text-[11px] whitespace-nowrap ${
+                        isEvaluated && recommendedRating === 'good'
+                          ? 'text-[#4ade80] font-bold'
+                          : 'text-stone-400'
+                      }`}
+                    >
+                      {isEvaluated && recommendedRating === 'good' ? '★ 推荐 · 3' : '提取成功 · 3'}
+                    </span>
+                  </button>
 
-              {/* Right Feather Asset Badge */}
-              <div className="hidden sm:flex items-center gap-1 font-mono text-xs text-[#d49e3d] font-bold bg-[#243427] px-3 py-1.5 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] shrink-0">
-                <span>❖ 羽毛资产 +2</span>
+                  {/* 4. EASY */}
+                  <button
+                    onClick={() => handleRate('easy')}
+                    disabled={!isEvaluated || isRevealedDirectly}
+                    className={`flex flex-col items-center group cursor-pointer transition-all ${
+                      !isEvaluated || isRevealedDirectly ? 'opacity-30 cursor-not-allowed' : ''
+                    }`}
+                    title="快捷键: 4"
+                  >
+                    <div className="telegraph-dial-knob group-hover:scale-105 transition-transform">
+                      <div className="telegraph-dial-slit rotate-60" />
+                    </div>
+                    <span className="font-mono text-[9px] sm:text-[10px] font-bold text-stone-300 mt-1">
+                      EASY
+                    </span>
+                    <span className="font-serif text-[10px] sm:text-[11px] text-stone-400 whitespace-nowrap">
+                      太简单 · 4
+                    </span>
+                  </button>
+                </div>
+
+                {/* Right Feather Asset Badge */}
+                <div className="hidden sm:flex items-center gap-1 font-mono text-xs text-[#d49e3d] font-bold bg-[#243427] px-3 py-1.5 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#0e1610] shrink-0">
+                  <span>❖ 羽毛资产 +2</span>
+                </div>
               </div>
             </div>
           </>

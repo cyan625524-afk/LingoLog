@@ -1,14 +1,9 @@
-// ⚠️ 相对导入必须带 .js 后缀（云平台 ESM 运行要求）。
 import app from '../server.js';
 
-/**
- * 云平台 serverless 入口：/api/cron-remind
- * 用于 Vercel Cron、Cloudflare Worker 或第三方定时器定时轮询未学状态并向微信发送提醒。
- */
 export default function handler(req: any, res: any) {
-  if (req.url && !req.url.startsWith('/api')) {
-    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
-  }
+  const query = req.url && req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  req.url = '/api/cron-remind' + query;
+
   try {
     return app(req, res);
   } catch (err: any) {

@@ -1,9 +1,9 @@
 import app from '../server.js';
 
 export default function handler(req: any, res: any) {
-  if (req.url && !req.url.startsWith('/api')) {
-    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
-  }
+  const query = req.url && req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  req.url = '/api/wxpusher-qrcode' + query;
+
   try {
     return app(req, res);
   } catch (err: any) {

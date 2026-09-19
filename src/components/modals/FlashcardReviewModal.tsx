@@ -65,6 +65,8 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
 
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const isRecordingRef = useRef(false);
   const recognizedTextRef = useRef('');
 
@@ -81,9 +83,32 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     return getReviewModeAndPrompt(currentCard);
   }, [currentCard]);
 
+  // 停止所有录音与识别通道并彻底释放麦克风硬件
+  const stopCurrentAudioTracks = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
+    isRecordingRef.current = false;
+  };
+
   // 重置单张卡片的交互状态
   const resetCardState = () => {
-    stopCurrentRecognition();
+    stopCurrentAudioTracks();
     setIsRecording(false);
     isRecordingRef.current = false;
     setRecognizedText('');
@@ -103,7 +128,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
       setReviewedCount(0);
       resetCardState();
     } else {
-      stopCurrentRecognition();
+      stopCurrentAudioTracks();
     }
   }, [isOpen, cards]);
 
@@ -114,102 +139,118 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     }
   }, [isOpen, currentCard]);
 
-  // 停止语音识别并清理
-  const stopCurrentRecognition = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch {}
-      recognitionRef.current = null;
-    }
-    isRecordingRef.current = false;
-  };
-
   // 组件卸载时释放资源
   useEffect(() => {
     return () => {
-      stopCurrentRecognition();
+      stopCurrentAudioTracks();
     };
   }, []);
 
   /**
-   * 启动 ASR 语音识别
-   * 针对手机端（Edge/Chrome/Safari）的关键优化：
-   * 1. 绝不同时调用 getUserMedia，避免手机 OS 底层音频硬件被互斥占用导致 ASR 静默失败。
-   * 2. continuous 设置为 false（移动端标准规范），自然支持停顿自动断句。
-   * 3. 及时更新 ref，防止闭包在 onend 时丢失识别文本。
+   * 启动录音与语音识别（与 SpeechPracticeModal 经过实测验证的手机端底层实现 100% 对齐）
    */
-  const startRecording = () => {
+  const startRecording = async () => {
     if (!currentCard) return;
     sound.playKeyClick();
     setRecordingError(null);
     setRecognizedText('');
     recognizedTextRef.current = '';
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    let micStarted = false;
 
-    if (!SpeechRecognition) {
-      setRecordingError('当前浏览器不支持网页语音识别（SpeechRecognition），可直接看答案。');
+    // 1. 通过 getUserMedia 激活手机麦克风底层通道与 MediaRecorder 录音上下文
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const micPromise = navigator.mediaDevices.getUserMedia({ audio: true });
+        micPromise.catch(() => {});
+        const stream = await Promise.race([
+          micPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000)),
+        ]);
+
+        if (!stream) {
+          setRecordingError('麦克风没有响应，请在手机浏览器设置中允许麦克风权限。');
+          return;
+        }
+
+        mediaStreamRef.current = stream;
+
+        let mimeType = '';
+        if (typeof MediaRecorder !== 'undefined') {
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            mimeType = 'audio/webm;codecs=opus';
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            mimeType = 'audio/webm';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            mimeType = 'audio/mp4';
+          }
+        }
+
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+        setIsRecording(true);
+        isRecordingRef.current = true;
+        micStarted = true;
+      } catch (err: any) {
+        console.warn('Microphone error or permission denied:', err);
+        const errName = String(err?.name || '');
+        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+          setRecordingError('麦克风权限被拒绝，请在浏览器或手机权限设置中允许访问麦克风。');
+        } else {
+          setRecordingError('未能启动麦克风，请确认已允许麦克风访问。');
+        }
+        return;
+      }
+    } else {
+      setRecordingError('这台浏览器不提供录音能力（请确保在 HTTPS 下访问）。');
       return;
     }
 
-    try {
-      stopCurrentRecognition();
+    // 2. 启动语音识别（SpeechRecognition）
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US';
-      recognition.continuous = false; // 手机端必须为 false，避免移动端引擎直接异常中断
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.continuous = false;
+        recognition.interimResults = true;
 
-      recognition.onstart = () => {
-        setIsRecording(true);
-        isRecordingRef.current = true;
-      };
-
-      recognition.onresult = (event: any) => {
-        let transcript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0]?.transcript || '';
-        }
-        transcript = transcript.trim();
-        if (transcript) {
-          setRecognizedText(transcript);
-          recognizedTextRef.current = transcript;
-        }
-      };
-
-      recognition.onerror = (e: any) => {
-        console.warn('SpeechRecognition notice:', e);
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          setRecordingError('麦克风权限被拒绝，请在手机系统或浏览器地址栏设置中允许麦克风权限。');
-        } else if (e.error === 'network') {
-          setRecordingError('语音识别网络连接超时，请检查网络或点击「直接看答案」。');
-        }
-      };
-
-      recognition.onend = () => {
-        // 手机端在说完一句话后会自动触发 onend
-        if (isRecordingRef.current) {
-          setIsRecording(false);
-          isRecordingRef.current = false;
-          // 若已识别到有效内容，自动顺畅过渡到评测阶段
-          if (recognizedTextRef.current.trim().length >= 2) {
-            evaluateSpokenText(recognizedTextRef.current.trim());
+        recognition.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            .map((r: any) => r[0].transcript)
+            .join('')
+            .trim();
+          if (transcript) {
+            setRecognizedText(transcript);
+            recognizedTextRef.current = transcript;
           }
-        }
-      };
+        };
 
-      recognition.start();
-      recognitionRef.current = recognition;
-      setIsRecording(true);
-      isRecordingRef.current = true;
-    } catch (err: any) {
-      console.warn('SpeechRecognition failed to start:', err);
-      setRecordingError('启动麦克风失败，请确认允许浏览器麦克风权限。');
-      setIsRecording(false);
-      isRecordingRef.current = false;
+        recognition.onerror = (e: any) => {
+          console.warn('Speech recognition notice:', e);
+          if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+            setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风。');
+          }
+        };
+
+        recognition.onend = () => {
+          // ⚠️ 极其关键：绝不在 onend 中关闭 isRecording！MediaRecorder 依然在保持手机声卡录音状态，
+          // 彻底杜绝手机端由于短时静音导致的"闪跳回点击前状态"！
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+        micStarted = true;
+      } catch (err) {
+        console.warn('Speech recognition failed to start:', err);
+      }
+    }
+
+    if (!micStarted && !recordingError) {
+      setRecordingError('未能启动录音，请确认已允许麦克风权限。');
     }
   };
 
@@ -238,22 +279,38 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   // 手动点击「完成说并提交判定」
   const stopRecordingAndEvaluate = () => {
     sound.playKeyClick();
-    isRecordingRef.current = false;
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch {}
       recognitionRef.current = null;
     }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
     setIsRecording(false);
+    isRecordingRef.current = false;
 
-    evaluateSpokenText(recognizedTextRef.current);
+    // 延时 150ms 等待最后的识别事件派发完毕（对齐 SpeechPracticeModal 的稳定做法）
+    setTimeout(() => {
+      const finalText = (recognizedTextRef.current || recognizedText).trim();
+      evaluateSpokenText(finalText);
+    }, 150);
   };
 
   // 用户未开口直接看答案（严格标记为 revealed，仅允许选择 AGAIN）
   const handleRevealDirectly = () => {
     sound.playCardFlip();
-    stopCurrentRecognition();
+    stopCurrentAudioTracks();
     setIsRecording(false);
     isRecordingRef.current = false;
     setIsRevealedDirectly(true);

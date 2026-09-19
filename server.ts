@@ -14,6 +14,12 @@ import { detectCategory, detectDefaultTags as detectTags } from "./src/utils/cat
 import { pickCoreHighlights } from "./src/utils/highlightPicker.js";
 import { getPreset, DEFAULT_PROVIDER_ID } from "./src/data/providers.js";
 import { serveEdgeTts } from "./src/server/edgeTts.js";
+import {
+  createWxPusherQrCode,
+  checkWxPusherScan,
+  sendWxPusherMessage,
+  runDailyReminderInspection,
+} from "./src/server/wxpusher.js";
 
 dotenv.config();
 
@@ -1384,6 +1390,86 @@ app.post("/api/evaluate-speech", async (req, res) => {
     console.warn("Speech AI eval error, falling back to local word analysis:", redact(error));
     const localData = generateLocalWordAnalysis();
     return res.json({ success: true, data: localData });
+  }
+});
+
+// ── WxPusher 微信学习提醒 API ──────────────────────────────────────────
+
+// 申请关注带参二维码
+app.post("/api/wxpusher/qrcode", async (req, res) => {
+  try {
+    const { appToken, extra } = req.body || {};
+    const result = await createWxPusherQrCode(appToken, extra);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "创建二维码异常" });
+  }
+});
+
+// 查询微信扫码关注状态
+app.get("/api/wxpusher/check-scan", async (req, res) => {
+  try {
+    const code = String(req.query.code || "").trim();
+    if (!code) {
+      return res.status(400).json({ success: false, error: "缺少 code 参数" });
+    }
+    const result = await checkWxPusherScan(code);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "查询扫码状态异常" });
+  }
+});
+
+// 发送微信测试电文
+app.post("/api/wxpusher/test", async (req, res) => {
+  try {
+    const { uid, appToken } = req.body || {};
+    if (!uid) {
+      return res.status(400).json({ success: false, error: "缺少微信用户 UID" });
+    }
+
+    const testContent = `
+<div style="padding: 16px; background-color: #faf7ee; border: 2px solid #292524; color: #1c1917; font-family: sans-serif; border-radius: 4px; box-shadow: 3px 3px 0px #1c1917;">
+  <div style="font-size: 13px; font-weight: bold; color: #b45309; margin-bottom: 8px;">📻 LINGOLOG 微信状态栏推送测试</div>
+  <h3 style="margin-top: 0; color: #99332e;">电报波段对齐成功！</h3>
+  <p style="font-size: 14px; line-height: 1.6; color: #44403c;">
+    收到这条消息，说明你的手机微信已成功与 <strong>LingoLog 英语电台</strong> 建立双向联络。
+  </p>
+  <p style="font-size: 13px; color: #57534e;">
+    当你在设定的提醒时间（如 21:00）前<strong>尚未完成今日复习打卡</strong>时，电台会自动发送状态栏提醒催你值机。今日若已学完，系统将自动静默，绝不打扰。
+  </p>
+  <div style="margin-top: 14px; text-align: center;">
+    <a href="https://lingo-log-three.vercel.app" style="display: inline-block; background-color: #d49e3d; color: #1c1917; font-weight: bold; text-decoration: none; padding: 10px 18px; border-radius: 2px; border: 1px solid #1c1917;">
+      ⚡ 开启今日电台练习
+    </a>
+  </div>
+</div>
+    `.trim();
+
+    const result = await sendWxPusherMessage({
+      uid: String(uid).trim(),
+      title: "📻 LingoLog 电台测试推送成功",
+      summary: "恭喜！LingoLog 每日学习提醒已与你的微信成功绑定！",
+      content: testContent,
+      appToken,
+    });
+
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "测试消息发送异常" });
+  }
+});
+
+// 每日未学定时巡检入口（支持 GET / POST，可由 Vercel Cron、Cloudflare Worker 或第三方定时器唤起）
+app.all("/api/cron-remind", async (req, res) => {
+  try {
+    const cronSecret = String(req.query.secret || req.headers["x-cron-secret"] || "").trim();
+    const result = await runDailyReminderInspection(cronSecret);
+    const status = (result as any).status || (result.success ? 200 : 500);
+    return res.status(status).json(result);
+  } catch (err: any) {
+    console.error("[cron-remind] 巡检异常:", err);
+    return res.status(500).json({ success: false, error: err?.message || "定时巡检执行异常" });
   }
 });
 

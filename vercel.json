@@ -14,8 +14,17 @@
     },
     "api/tts.ts": {
       "maxDuration": 30
+    },
+    "api/cron-remind.ts": {
+      "maxDuration": 60
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron-remind",
+      "schedule": "0 13 * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]

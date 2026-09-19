@@ -32,6 +32,7 @@ import { requestNotificationPermission } from '../../utils/tts';
 import { ApiEngineControls } from '../common/ApiEngineControls';
 import { AVATAR_PRESETS } from '../../utils/avatars';
 import { getEquippedTitle } from '../../utils/titles';
+import { WechatReminderModal } from '../modals/WechatReminderModal';
 
 interface ProfileViewProps {
   userProfile: UserProfile;
@@ -67,6 +68,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [nameInput, setNameInput] = useState(userProfile.name);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [savedToast, setSavedToast] = useState<string | null>(null);
+  const [isWechatModalOpen, setIsWechatModalOpen] = useState(false);
 
   useEffect(() => {
     setFormData(settings);
@@ -486,6 +488,61 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   {formData.enableReminders ? '已开启' : '已关闭'}
                 </button>
               </div>
+
+              {/* 微信每日未学状态栏提醒 (WxPusher) */}
+              <div className="pt-3 border-t border-dashed border-stone-300 dark:border-stone-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-serif font-bold text-stone-900 dark:text-white flex items-center gap-1.5">
+                      <Radio className="w-3.5 h-3.5 text-[#99332e] dark:text-[#d49e3d]" />
+                      <span>微信每日未学提醒 (手机状态栏)</span>
+                    </div>
+                    <div className="text-[11px] text-stone-500 dark:text-stone-400">
+                      {formData.wxpusherEnabled && formData.wxpusherUid ? (
+                        <span className="text-[#2e7d32] dark:text-[#81c784] font-bold">
+                          ● 每日 {formData.reminderTime || '21:00'} 巡检 · 未学时推送
+                        </span>
+                      ) : (
+                        <span>今日未学时自动在微信状态栏推送待机提醒</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      sound.playKeyClick();
+                      setIsWechatModalOpen(true);
+                    }}
+                    className={`px-3.5 py-1.5 rounded-xs text-xs font-serif-display font-bold border-2 border-stone-900 shadow-[2px_2px_0px_#101711] cursor-pointer transition-all active:translate-y-0.5 ${
+                      formData.wxpusherEnabled && formData.wxpusherUid
+                        ? 'bg-[#d49e3d] text-stone-950'
+                        : 'bg-[#faf7ee] dark:bg-[#2a382c] text-stone-700 dark:text-stone-300'
+                    }`}
+                  >
+                    {formData.wxpusherEnabled && formData.wxpusherUid ? '已开启' : '配置绑定'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between bg-white dark:bg-[#121c13] px-3 py-2 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] text-[11px]">
+                  <span className="text-stone-600 dark:text-stone-400 font-mono">
+                    {formData.wxpusherUid ? (
+                      <span className="text-stone-800 dark:text-stone-200">
+                        接收端: <strong className="text-[#b45309] dark:text-[#d49e3d]">{formData.wxpusherUid.slice(0, 8)}...</strong>
+                      </span>
+                    ) : (
+                      '尚未绑定微信接收端'
+                    )}
+                  </span>
+                  <button
+                    onClick={() => {
+                      sound.playKeyClick();
+                      setIsWechatModalOpen(true);
+                    }}
+                    className="text-[#99332e] dark:text-[#d49e3d] font-bold font-serif hover:underline flex items-center gap-1"
+                  >
+                    {formData.wxpusherUid ? '修改设置 / 测试' : '微信扫码一秒绑定 →'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -666,6 +723,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Wechat Daily Reminder Modal */}
+      <WechatReminderModal
+        isOpen={isWechatModalOpen}
+        onClose={() => setIsWechatModalOpen(false)}
+        settings={formData}
+        onSaveSettings={(newSettings) => {
+          setFormData(newSettings);
+          onSaveSettings(newSettings);
+          showToast('微信提醒设置已更新并保存');
+        }}
+      />
     </div>
   );
 };

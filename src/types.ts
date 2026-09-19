@@ -255,6 +255,10 @@ export interface AppSettings {
   themeMode: 'light' | 'dark';
   enableReminders: boolean;
   reminderTime: string;
+  wxpusherUid?: string;
+  wxpusherEnabled?: boolean;
+  wxpusherAppToken?: string;
+  lastWechatReminderDate?: string;
   dailyReviewLimit: number;
   speechRate: number;
   targetRetention: 80 | 85 | 90; // P1 调度目标记忆留存率 (80%, 85%, 90%)
@@ -264,4 +268,12 @@ export interface AppSettings {
   makeupCards?: number; // 补签印章卡数量
   autoBackupDownload: boolean; // P2 自动下载备份
   lastBackupDate?: string;
+}
+
+export interface DailyReminderConfig {
+  enabled: boolean;
+  reminderTime: string; // e.g. "21:00"
+  wxpusherUid: string;
+  customAppToken?: string;
+  lastNotifiedDate?: string;
 }

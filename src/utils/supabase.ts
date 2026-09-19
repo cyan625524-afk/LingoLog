@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
-import { FlashCard } from '../types';
+import { FlashCard, DailyReminderConfig } from '../types';
 import { sanitizeFlashCard } from './storage';
 
 const K_SUPABASE_URL = 'lingolog_supabase_url';
@@ -185,7 +185,7 @@ export async function syncCardsWithCloud(localCards: FlashCard[]): Promise<SyncS
     const cloudMap = new Map<string, { card: FlashCard; updatedAt: string }>();
     if (Array.isArray(cloudRows)) {
       for (const row of cloudRows) {
-        if (row && row.card && row.id) {
+        if (row && row.card && row.id && !row.id.startsWith('__')) {
           const sanitized = sanitizeFlashCard(row.card, 0);
           cloudMap.set(row.id, { card: sanitized, updatedAt: row.updated_at });
         }
@@ -308,5 +308,124 @@ export async function deleteSingleCardFromCloud(cardId: string): Promise<void> {
     await sb.from('lingolog_cards').delete().eq('id', cardId).eq('user_id', user.id);
   } catch (e) {
     console.warn('[LingoLog Supabase] 单卡删除失败:', e);
+  }
+}
+
+/* ──────────────────────────────────────────────────────────
+ * 微信每日未学提醒配置同步 (WxPusher)
+ * ────────────────────────────────────────────────────────── */
+
+export async function saveDailyReminderConfig(config: DailyReminderConfig): Promise<{ success: boolean; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { success: false, error: '未连接云端' };
+
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) {
+    // 未登录 Supabase 时仅依赖本地存储
+    return { success: true };
+  }
+
+  try {
+    const updatedAt = new Date().toISOString();
+
+    // 1. 尝试写入 lingolog_reminders 表
+    const { error: reminderTableErr } = await sb.from('lingolog_reminders').upsert({
+      user_id: user.id,
+      wxpusher_uid: config.wxpusherUid,
+      reminder_time: config.reminderTime,
+      enabled: config.enabled,
+      custom_app_token: config.customAppToken || null,
+      updated_at: updatedAt,
+    }, { onConflict: 'user_id' });
+
+    // 2. 双重容灾：同时以系统卡片形式保存在 lingolog_cards (防止用户尚未建 lingolog_reminders 表)
+    await sb.from('lingolog_cards').upsert({
+      id: `__reminder_${user.id}`,
+      user_id: user.id,
+      card: {
+        type: 'reminder_config',
+        wxpusherUid: config.wxpusherUid,
+        reminderTime: config.reminderTime,
+        enabled: config.enabled,
+        customAppToken: config.customAppToken || '',
+        lastNotifiedDate: config.lastNotifiedDate || '',
+      } as any,
+      updated_at: updatedAt,
+    }, { onConflict: 'id' });
+
+    // 3. 同时更新 user_metadata
+    try {
+      await sb.auth.updateUser({
+        data: {
+          reminder_config: config,
+        },
+      });
+    } catch {
+      // ignore metadata error
+    }
+
+    if (reminderTableErr && reminderTableErr.code !== 'PGRST205') {
+      console.warn('[LingoLog Supabase] 提醒表写入提示:', reminderTableErr.message);
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('[LingoLog Supabase] 保存提醒配置异常:', err);
+    return { success: false, error: err?.message || '保存失败' };
+  }
+}
+
+export async function fetchDailyReminderConfig(): Promise<DailyReminderConfig | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
+
+  try {
+    // 1. 优先查 lingolog_reminders 表
+    const { data: tableData, error: tableErr } = await sb
+      .from('lingolog_reminders')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!tableErr && tableData) {
+      return {
+        enabled: Boolean(tableData.enabled),
+        reminderTime: tableData.reminder_time || '21:00',
+        wxpusherUid: tableData.wxpusher_uid || '',
+        customAppToken: tableData.custom_app_token || undefined,
+        lastNotifiedDate: tableData.last_notified_date || undefined,
+      };
+    }
+
+    // 2. 容灾读取 lingolog_cards 中的系统记录
+    const { data: cardRow } = await sb
+      .from('lingolog_cards')
+      .select('card')
+      .eq('id', `__reminder_${user.id}`)
+      .maybeSingle();
+
+    if (cardRow && cardRow.card) {
+      const c = cardRow.card as any;
+      return {
+        enabled: Boolean(c.enabled),
+        reminderTime: c.reminderTime || '21:00',
+        wxpusherUid: c.wxpusherUid || '',
+        customAppToken: c.customAppToken || undefined,
+        lastNotifiedDate: c.lastNotifiedDate || undefined,
+      };
+    }
+
+    // 3. 容灾读取 user_metadata
+    if (user.user_metadata?.reminder_config) {
+      return user.user_metadata.reminder_config as DailyReminderConfig;
+    }
+
+    return null;
+  } catch (err) {
+    console.warn('[LingoLog Supabase] 获取提醒配置失败:', err);
+    return null;
   }
 }

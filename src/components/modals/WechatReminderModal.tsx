@@ -336,14 +336,16 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
             {/* Manual UID Field */}
             <div className="pt-2 border-t border-dashed border-stone-300 dark:border-stone-800 space-y-1">
               <label className="text-[10px] font-mono text-stone-500 dark:text-stone-400 flex items-center justify-between">
-                <span>用户 WxPusher UID（扫码自动获取或手动填入）：</span>
+                <span>接收端 UID 或专属推送令牌 SPT（二选一）：</span>
                 {uid && (
-                  <span className="text-[#2e7d32] dark:text-[#81c784] font-bold">✓ 格式有效</span>
+                  <span className="text-[#2e7d32] dark:text-[#81c784] font-bold">
+                    {uid.startsWith('SPT_') ? '✓ 专属极简令牌 (SPT)' : '✓ 标准接收端 (UID)'}
+                  </span>
                 )}
               </label>
               <input
                 type="text"
-                placeholder="例如: UID_a1b2c3d4e5f6g7h8i9..."
+                placeholder="填入 UID_xxxx 或 App 中的专属推送令牌 SPT_xxxx"
                 value={uid}
                 onChange={(e) => {
                   setUid(e.target.value.trim());

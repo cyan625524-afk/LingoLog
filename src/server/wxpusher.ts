@@ -116,13 +116,41 @@ export async function checkWxPusherScan(code: string): Promise<WxPusherScanResul
  * 发送微信模板消息（状态栏推送）
  */
 export async function sendWxPusherMessage(options: WxPusherSendOptions): Promise<{ success: boolean; data?: any; error?: string }> {
-  const token = getAppToken(options.appToken);
-  if (!token) {
-    return { success: false, error: '尚未配置 WxPusher AppToken' };
+  if (!options.uid) {
+    return { success: false, error: '未指定目标用户的 WxPusher UID 或 SPT' };
   }
 
-  if (!options.uid) {
-    return { success: false, error: '未指定目标用户的 WxPusher UID' };
+  const cleanTarget = options.uid.trim();
+
+  // 1. 如果填入的是极简推送令牌 (SPT_xxx)，直接调用极简推送接口，无需 AppToken
+  if (cleanTarget.startsWith('SPT_')) {
+    try {
+      const res = await fetch('https://wxpusher.zjiecode.com/api/send/message/simple-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spt: cleanTarget,
+          content: options.content,
+          summary: options.summary || options.title,
+          contentType: 2, // HTML 格式
+          url: options.url || 'https://lingo-log-three.vercel.app',
+        }),
+      });
+
+      const json = (await res.json()) as any;
+      if (json.code === 1000) {
+        return { success: true, data: json.data };
+      }
+      return { success: false, error: json.msg || 'SPT 极简推送投递失败' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || '网络连接异常，无法发送 SPT 极简通知' };
+    }
+  }
+
+  // 2. 标准推送 (UID_xxx)
+  const token = getAppToken(options.appToken);
+  if (!token) {
+    return { success: false, error: '尚未配置 WxPusher AppToken。如果使用的是个人推送，请填入 SPT_ 开头的极简推送令牌。' };
   }
 
   try {

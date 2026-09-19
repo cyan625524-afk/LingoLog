@@ -17,6 +17,15 @@
     },
     "api/cron-remind.ts": {
       "maxDuration": 60
+    },
+    "api/wxpusher-qrcode.ts": {
+      "maxDuration": 30
+    },
+    "api/wxpusher-check-scan.ts": {
+      "maxDuration": 30
+    },
+    "api/wxpusher-test.ts": {
+      "maxDuration": 30
     }
   },
   "crons": [

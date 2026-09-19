@@ -1396,7 +1396,7 @@ app.post("/api/evaluate-speech", async (req, res) => {
 // ── WxPusher 微信学习提醒 API ──────────────────────────────────────────
 
 // 申请关注带参二维码
-app.post("/api/wxpusher/qrcode", async (req, res) => {
+app.post(["/api/wxpusher-qrcode", "/api/wxpusher/qrcode"], async (req, res) => {
   try {
     const { appToken, extra } = req.body || {};
     const result = await createWxPusherQrCode(appToken, extra);
@@ -1407,7 +1407,7 @@ app.post("/api/wxpusher/qrcode", async (req, res) => {
 });
 
 // 查询微信扫码关注状态
-app.get("/api/wxpusher/check-scan", async (req, res) => {
+app.get(["/api/wxpusher-check-scan", "/api/wxpusher/check-scan"], async (req, res) => {
   try {
     const code = String(req.query.code || "").trim();
     if (!code) {
@@ -1421,7 +1421,7 @@ app.get("/api/wxpusher/check-scan", async (req, res) => {
 });
 
 // 发送微信测试电文
-app.post("/api/wxpusher/test", async (req, res) => {
+app.post(["/api/wxpusher-test", "/api/wxpusher/test"], async (req, res) => {
   try {
     const { uid, appToken } = req.body || {};
     if (!uid) {

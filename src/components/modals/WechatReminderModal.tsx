@@ -37,8 +37,10 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
   const [uid, setUid] = useState<string>(settings.wxpusherUid || '');
   const [customAppToken, setCustomAppToken] = useState<string>(settings.wxpusherAppToken || '');
 
+  const DEFAULT_OFFICIAL_QR = 'https://open.weixin.qq.com/qr/code?username=wxpusher';
+
   // 微信带参二维码相关状态
-  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const [qrUrl, setQrUrl] = useState<string>(DEFAULT_OFFICIAL_QR);
   const [qrCodeId, setQrCodeId] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
@@ -56,11 +58,10 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
       setUid(settings.wxpusherUid || '');
       setCustomAppToken(settings.wxpusherAppToken || '');
       setToastMessage(null);
+      setQrUrl(DEFAULT_OFFICIAL_QR);
 
-      // 如果尚未绑定 UID，自动尝试加载微信关注二维码
-      if (!settings.wxpusherUid) {
-        loadQrCode();
-      }
+      // 尝试向服务端获取专属带参二维码
+      loadQrCode();
     }
   }, [isOpen, settings]);
 
@@ -76,7 +77,7 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
     setQrLoading(true);
     setQrError(null);
     try {
-      const res = await fetch('/api/wxpusher/qrcode', {
+      const res = await fetch('/api/wxpusher-qrcode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,15 +85,19 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
           extra: `lingolog_${Date.now()}`,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success && (data.url || data.code)) {
-        setQrUrl(data.url);
-        setQrCodeId(data.code);
+        if (data.url) setQrUrl(data.url);
+        if (data.code) setQrCodeId(data.code);
       } else {
-        setQrError(data.message || data.error || '获取二维码失败');
+        // 服务端若未配置专属 AppToken，使用官方直通二维码
+        setQrUrl(DEFAULT_OFFICIAL_QR);
+        setQrCodeId(null);
       }
-    } catch (err: any) {
-      setQrError('网络请求失败，请检查服务连接');
+    } catch {
+      // 容灾直接使用官方直通二维码
+      setQrUrl(DEFAULT_OFFICIAL_QR);
+      setQrCodeId(null);
     } finally {
       setQrLoading(false);
     }
@@ -102,23 +107,23 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
   const handleCheckScan = async () => {
     sound.playKeyClick();
     if (!qrCodeId) {
-      showToast('error', '未检测到有效二维码，请重新刷新二维码');
+      showToast('info', '扫码关注后，请在公众号内点击菜单「我的」→「我的UID」，复制粘贴到下方输入框即可完成绑定！');
       return;
     }
     setIsCheckingScan(true);
     try {
-      const res = await fetch(`/api/wxpusher/check-scan?code=${encodeURIComponent(qrCodeId)}`);
-      const data = await res.json();
+      const res = await fetch(`/api/wxpusher-check-scan?code=${encodeURIComponent(qrCodeId)}`);
+      const data = await res.json().catch(() => ({}));
       if (data.success && data.scanned && data.uid) {
         sound.playSuccess();
         setUid(data.uid);
         setEnabled(true);
         showToast('success', `扫码绑定成功！已获取 UID: ${data.uid}`);
       } else {
-        showToast('info', '尚未检测到扫码，请在微信中扫码关注后再次点击检测');
+        showToast('info', '尚未检测到扫码，也可在公众号菜单【我的】→【我的UID】中直接复制粘贴');
       }
-    } catch (e: any) {
-      showToast('error', '查询扫码状态失败');
+    } catch {
+      showToast('info', '扫码关注后，请在公众号菜单【我的】→【我的UID】复制填入下方');
     } finally {
       setIsCheckingScan(false);
     }
@@ -135,7 +140,7 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
 
     setIsTesting(true);
     try {
-      const res = await fetch('/api/wxpusher/test', {
+      const res = await fetch('/api/wxpusher-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -143,14 +148,14 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
           appToken: customAppToken.trim() || undefined,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         sound.playSuccess();
         showToast('success', '⚡ 测试电报已成功投递！请查看手机微信通知与状态栏');
       } else {
-        showToast('error', data.error || '测试消息投递失败');
+        showToast('error', data.error || data.message || '测试消息投递失败');
       }
-    } catch (e: any) {
+    } catch {
       showToast('error', '网络异常，测试消息发送失败');
     } finally {
       setIsTesting(false);
@@ -303,15 +308,15 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
 
               {/* Instructions */}
               <div className="flex-1 space-y-2 text-stone-700 dark:text-stone-300 text-[11px] leading-relaxed">
-                <ol className="list-decimal list-inside space-y-1">
+                <ol className="list-decimal list-inside space-y-1.5">
                   <li>
-                    使用手机微信扫描左侧二维码，关注<strong>「WxPusher消息推送」</strong>公众号。
+                    使用手机微信扫描左侧二维码，关注<strong>「开发者服务 (WxPusher)」</strong>公众号。
                   </li>
                   <li>
-                    关注后点击下方<strong>「检查扫码状态」</strong>按钮，系统将自动填入你的唯一 UID。
+                    关注后微信会自动推送你的 <strong>UID</strong>；亦可点击公众号菜单<strong>「我的」→「我的UID」</strong>直接复制。
                   </li>
                   <li>
-                    也可直接在关注后的公众号内发送并复制你的 <code className="bg-stone-200 dark:bg-stone-800 px-1 py-0.5 rounded text-stone-900 dark:text-stone-100 font-mono">UID_xxxx</code> 填入下方输入框。
+                    将获得的 <code className="bg-stone-200 dark:bg-stone-800 px-1 py-0.5 rounded text-stone-900 dark:text-stone-100 font-mono">UID_xxxx</code> 填入下方输入框，点击保存即可生效！
                   </li>
                 </ol>
 

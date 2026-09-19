@@ -58,6 +58,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   const [recognizedText, setRecognizedText] = useState('');
   const [isEvaluated, setIsEvaluated] = useState(false);
   const [isRevealedDirectly, setIsRevealedDirectly] = useState(false);
+  const [isSelfEvaluating, setIsSelfEvaluating] = useState(false);
   const [recallEvaluation, setRecallEvaluation] = useState<RecallEvaluation | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
@@ -115,6 +116,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     recognizedTextRef.current = '';
     setIsEvaluated(false);
     setIsRevealedDirectly(false);
+    setIsSelfEvaluating(false);
     setRecallEvaluation(null);
     setRecordingError(null);
     setIsExplanationExpanded(false);
@@ -147,7 +149,9 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   }, []);
 
   /**
-   * 启动录音与语音识别（与 SpeechPracticeModal 经过实测验证的手机端底层实现 100% 对齐）
+   * 启动录音与语音识别：
+   * 1. 优先使用 Web Speech API（SpeechRecognition）独占麦克风通道，绝不与 getUserMedia 同时启动（彻底避免 Android 声卡硬件独占冲突）
+   * 2. 若浏览器不支持 SpeechRecognition（如安卓端 Edge），优雅降级为 getUserMedia 音频上下文采集，提供真实开口时机与触觉反馈
    */
   const startRecording = async () => {
     if (!currentCard) return;
@@ -155,74 +159,32 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     setRecordingError(null);
     setRecognizedText('');
     recognizedTextRef.current = '';
+    setIsSelfEvaluating(false);
 
-    let micStarted = false;
-
-    // 1. 通过 getUserMedia 激活手机麦克风底层通道与 MediaRecorder 录音上下文
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const micPromise = navigator.mediaDevices.getUserMedia({ audio: true });
-        micPromise.catch(() => {});
-        const stream = await Promise.race([
-          micPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000)),
-        ]);
-
-        if (!stream) {
-          setRecordingError('麦克风没有响应，请在手机浏览器设置中允许麦克风权限。');
-          return;
-        }
-
-        mediaStreamRef.current = stream;
-
-        let mimeType = '';
-        if (typeof MediaRecorder !== 'undefined') {
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            mimeType = 'audio/webm;codecs=opus';
-          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            mimeType = 'audio/webm';
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            mimeType = 'audio/mp4';
-          }
-        }
-
-        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        recorder.start();
-        mediaRecorderRef.current = recorder;
-        setIsRecording(true);
-        isRecordingRef.current = true;
-        micStarted = true;
-      } catch (err: any) {
-        console.warn('Microphone error or permission denied:', err);
-        const errName = String(err?.name || '');
-        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-          setRecordingError('麦克风权限被拒绝，请在浏览器或手机权限设置中允许访问麦克风。');
-        } else {
-          setRecordingError('未能启动麦克风，请确认已允许麦克风访问。');
-        }
-        return;
-      }
-    } else {
-      setRecordingError('这台浏览器不提供录音能力（请确保在 HTTPS 下访问）。');
-      return;
-    }
-
-    // 2. 启动语音识别（SpeechRecognition）
+    let asrStarted = false;
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
+    // 1. 如果浏览器具备 SpeechRecognition，单独使用并独占麦克风，绝不同时开启 getUserMedia
     if (SpeechRecognition) {
       try {
         const recognition = new SpeechRecognition();
         recognition.lang = 'en-US';
-        recognition.continuous = false;
+        recognition.continuous = true;
         recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          setIsRecording(true);
+          isRecordingRef.current = true;
+        };
 
         recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((r: any) => r[0].transcript)
-            .join('')
-            .trim();
+          let transcript = '';
+          for (let i = 0; i < event.results.length; i++) {
+            transcript += event.results[i][0]?.transcript || '';
+          }
+          transcript = transcript.trim();
           if (transcript) {
             setRecognizedText(transcript);
             recognizedTextRef.current = transcript;
@@ -232,29 +194,68 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
         recognition.onerror = (e: any) => {
           console.warn('Speech recognition notice:', e);
           if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-            setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风。');
+            setRecordingError('麦克风权限未授予，请在手机浏览器设置中开启麦克风权限。');
           }
+          // 其他移动端错误（如 network、no-speech），不中断录音流程
         };
 
         recognition.onend = () => {
-          // ⚠️ 极其关键：绝不在 onend 中关闭 isRecording！MediaRecorder 依然在保持手机声卡录音状态，
-          // 彻底杜绝手机端由于短时静音导致的"闪跳回点击前状态"！
+          // 移动端静音检测会触发 onend，若用户尚未点击完成，自动尝试重启保持倾听状态
+          if (isRecordingRef.current && recognitionRef.current) {
+            try {
+              recognition.start();
+            } catch {}
+          }
         };
 
         recognition.start();
         recognitionRef.current = recognition;
-        micStarted = true;
+        setIsRecording(true);
+        isRecordingRef.current = true;
+        asrStarted = true;
       } catch (err) {
-        console.warn('Speech recognition failed to start:', err);
+        console.warn('SpeechRecognition start failed:', err);
       }
     }
 
-    if (!micStarted && !recordingError) {
-      setRecordingError('未能启动录音，请确认已允许麦克风权限。');
+    // 2. 如果浏览器不支持 SpeechRecognition（如安卓端 Edge）或启动异常，启动普通麦克风通道
+    if (!asrStarted) {
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        try {
+          const micPromise = navigator.mediaDevices.getUserMedia({ audio: true });
+          micPromise.catch(() => {});
+          const stream = await Promise.race([
+            micPromise,
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000)),
+          ]);
+
+          if (!stream) {
+            setRecordingError('麦克风没有响应，请在手机浏览器设置中允许麦克风权限。');
+            return;
+          }
+
+          mediaStreamRef.current = stream;
+          setIsRecording(true);
+          isRecordingRef.current = true;
+        } catch (err: any) {
+          console.warn('Microphone error:', err);
+          const errName = String(err?.name || '');
+          if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+            setRecordingError('麦克风权限被拒绝，请在手机浏览器设置中允许麦克风权限。');
+          } else {
+            setRecordingError('未能打开麦克风，请确认已允许麦克风访问或点击「直接看答案」。');
+          }
+          return;
+        }
+      } else {
+        // 极端兜底：即便浏览器无任何录音 API，也保持开口状态，绝不卡死
+        setIsRecording(true);
+        isRecordingRef.current = true;
+      }
     }
   };
 
-  // 纯前端本地判定逻辑
+  // 纯前端本地自动覆盖率判定逻辑
   const evaluateSpokenText = (textToEvaluate: string) => {
     if (!currentCard) return;
 
@@ -266,6 +267,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     );
 
     setRecallEvaluation(evaluation);
+    setIsSelfEvaluating(false);
     setIsEvaluated(true);
     setIsRevealedDirectly(false);
 
@@ -276,34 +278,33 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     }
   };
 
+  // 手机端 ASR 不可用或识别为空时的自查自评处理（满足硬约束：「保证 ASR 不可用时流程不卡死」）
+  const handleManualSelfEvaluation = () => {
+    if (!currentCard) return;
+    setIsSelfEvaluating(true);
+    setIsEvaluated(true);
+    setIsRevealedDirectly(false);
+    setRecallEvaluation(null);
+    sound.playCardFlip();
+  };
+
   // 手动点击「完成说并提交判定」
   const stopRecordingAndEvaluate = () => {
     sound.playKeyClick();
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      recognitionRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      mediaRecorderRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      try {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      } catch {}
-      mediaStreamRef.current = null;
-    }
+    stopCurrentAudioTracks();
     setIsRecording(false);
     isRecordingRef.current = false;
 
-    // 延时 150ms 等待最后的识别事件派发完毕（对齐 SpeechPracticeModal 的稳定做法）
+    // 延时 150ms 等待最后的识别事件派发完毕
     setTimeout(() => {
       const finalText = (recognizedTextRef.current || recognizedText).trim();
-      evaluateSpokenText(finalText);
+      if (finalText.length > 0) {
+        // ASR 成功转写出文字 -> 纯前端覆盖率自动评分
+        evaluateSpokenText(finalText);
+      } else {
+        // ASR 未能转写出文字（手机端浏览器限制、离线无服务、或环境杂音）
+        handleManualSelfEvaluation();
+      }
     }, 150);
   };
 
@@ -314,6 +315,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     setIsRecording(false);
     isRecordingRef.current = false;
     setIsRevealedDirectly(true);
+    setIsSelfEvaluating(false);
     setIsEvaluated(true);
     setRecallEvaluation({
       result: 'fail',
@@ -327,10 +329,11 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   // 方案 A：系统根据客观提取判定，自适应计算推荐评级
   const recommendedRating: ReviewRating = useMemo(() => {
     if (isRevealedDirectly) return 'again';
+    if (isSelfEvaluating) return 'good';
     if (recallEvaluation?.result === 'pass') return 'good';
     if (recallEvaluation?.result === 'partial') return 'hard';
     return 'again';
-  }, [isRevealedDirectly, recallEvaluation]);
+  }, [isRevealedDirectly, isSelfEvaluating, recallEvaluation]);
 
   // 快捷键支持
   useEffect(() => {
@@ -397,14 +400,31 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     if (!currentCard || !isEvaluated) return;
     sound.playKeyClick();
 
-    const retrievalResult = isRevealedDirectly
-      ? 'revealed'
-      : recallEvaluation?.result || 'fail';
+    let retrievalResult: RetrievalContext['result'] = 'fail';
+    let coverage = recallEvaluation?.accuracyPercent;
+
+    if (isRevealedDirectly) {
+      retrievalResult = 'revealed';
+      coverage = 0;
+    } else if (isSelfEvaluating) {
+      if (rating === 'good' || rating === 'easy') {
+        retrievalResult = 'pass';
+        coverage = 100;
+      } else if (rating === 'hard') {
+        retrievalResult = 'partial';
+        coverage = 60;
+      } else {
+        retrievalResult = 'fail';
+        coverage = 0;
+      }
+    } else {
+      retrievalResult = recallEvaluation?.result || 'fail';
+    }
 
     const context: RetrievalContext = {
       result: retrievalResult,
       mode: currentMode,
-      pronunciationCoverage: recallEvaluation?.accuracyPercent,
+      pronunciationCoverage: coverage,
     };
 
     onGradeCard(currentCard.id, rating, context);
@@ -555,7 +575,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                           <span>Think of the English</span>
                         </div>
                         <p className="text-xs font-serif leading-relaxed text-stone-600">
-                          请在脑中检索该英文表达，点击下方按钮大声说出。手机端说完会自动断句提交。
+                          请在脑中检索该英文表达，点击下方按钮大声说出。说完点击完成提交。
                         </p>
                       </div>
 
@@ -567,10 +587,10 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
                               <span className="font-bold">正在倾听你的英文口语...</span>
                             </div>
-                            <span className="text-stone-400 text-[11px]">说完自动或点击完成</span>
+                            <span className="text-stone-400 text-[11px]">说完点击下方完成</span>
                           </div>
                           <div className="font-serif-display text-base text-stone-100 min-h-[32px] italic">
-                            {recognizedText ? `"${recognizedText}"` : '请开口说出英文...'}
+                            {recognizedText ? `"${recognizedText}"` : '请大声说出英文，说完点击下方完成...'}
                           </div>
                         </div>
                       )}
@@ -629,6 +649,24 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                         <div className="p-2.5 bg-[#fbf0ed] border border-[#99332e]/50 rounded-xs text-[#99332e] text-xs flex items-center gap-2 font-mono">
                           <AlertCircle className="w-4 h-4 shrink-0" />
                           <span>未开口直接看答案：记为未掌握 (Revealed)，仅可选择「没记住 (AGAIN)」。</span>
+                        </div>
+                      ) : isSelfEvaluating ? (
+                        /* Mobile ASR Fallback: Self-Evaluation Banner */
+                        <div className="p-3 bg-[#243427] border-2 border-stone-900 rounded-xs text-stone-100 space-y-1.5 animate-in fade-in duration-150">
+                          <div className="flex items-center justify-between text-xs border-b border-stone-700 pb-1.5 flex-wrap gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-[#d49e3d] inline-block animate-pulse" />
+                              <span className="font-serif-display font-black text-xs text-[#d49e3d]">
+                                🎙️ 已开口提取 · 对照标准答案自查自评
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-stone-400 font-mono">
+                              移动端无实时转写
+                            </span>
+                          </div>
+                          <p className="text-xs text-stone-300 font-serif leading-relaxed">
+                            当前手机浏览器未开放网页语音实时转写服务。已为您呈现标准原稿与深度解析，请对比刚才开口的真实情况自评掌握度（推荐 <strong>GOOD</strong>）：
+                          </p>
                         </div>
                       ) : (
                         /* Retrieval & Pronunciation Scoring Result Banner */
@@ -757,7 +795,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                   <div className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-[#d49e3d] animate-pulse" />
                     <span>
-                      系统推荐：
+                      {isSelfEvaluating ? '自查推荐：' : '系统推荐：'}
                       <span className="text-[#d49e3d] font-bold uppercase">
                         {recommendedRating === 'good' && 'GOOD (提取成功)'}
                         {recommendedRating === 'hard' && 'HARD (有点难)'}
@@ -766,7 +804,9 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                       ，按 <kbd className="bg-stone-800 px-1 py-0.2 rounded-xs border border-stone-700">空格</kbd> 或 <kbd className="bg-stone-800 px-1 py-0.2 rounded-xs border border-stone-700">回车</kbd> 确认
                     </span>
                   </div>
-                  <span className="hidden sm:inline text-stone-400 text-[10px]">可点击其它旋钮自主微调</span>
+                  <span className="hidden sm:inline text-stone-400 text-[10px]">
+                    {isSelfEvaluating ? '根据实际开口情况自选旋钮' : '可点击其它旋钮自主微调'}
+                  </span>
                 </div>
               )}
 

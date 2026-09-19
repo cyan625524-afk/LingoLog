@@ -24,6 +24,8 @@ import {
   Clock,
   Cloud,
   X,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { AppSettings, UserProfile, NavTab } from '../../types';
 import { sound } from '../../utils/audio';
@@ -69,6 +71,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const [isWechatModalOpen, setIsWechatModalOpen] = useState(false);
+  const [isEngineExpanded, setIsEngineExpanded] = useState(Boolean(settings.apiEnabled));
 
   useEffect(() => {
     setFormData(settings);
@@ -550,105 +553,136 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="lg:col-span-7 space-y-5 sm:space-y-6">
             {/* AI Engine & API Key Configuration */}
             <div className="bg-[#f4edd3] dark:bg-[#1f2b21] rounded-xs p-5 border-2 border-stone-900 shadow-[4px_4px_0px_#101711] text-stone-900 dark:text-stone-100 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b-2 border-dashed border-stone-300 dark:border-stone-800">
+              <div
+                onClick={() => {
+                  sound.playKeyClick();
+                  setIsEngineExpanded(!isEngineExpanded);
+                }}
+                className="flex items-center justify-between pb-3 border-b-2 border-dashed border-stone-300 dark:border-stone-800 cursor-pointer select-none"
+              >
                 <div className="flex items-center gap-2 font-serif-display font-black text-sm">
                   <Cpu className="w-4 h-4 text-[#d49e3d]" />
                   <span>智能翻译引擎配置</span>
-                </div>
-                <span className="text-[10px] font-mono text-[#d49e3d] font-bold">
-                  AI ENGINE
-                </span>
-              </div>
-
-              {/* 服务商选择 */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-serif font-bold text-stone-800 dark:text-stone-200">
-                  服务商：
-                </label>
-                <select
-                  value={activeProviderId}
-                  onChange={(e) => handleProviderChange(e.target.value)}
-                  className="w-full text-xs p-2 rounded-xs border-2 border-stone-900 bg-white dark:bg-[#121c13] text-stone-900 dark:text-stone-100 font-mono shadow-[2px_2px_0px_#101711] cursor-pointer"
-                >
-                  {PROVIDER_PRESETS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-                {activePreset.note && (
-                  <p className="text-[10px] font-mono text-stone-500 dark:text-stone-400">
-                    {activePreset.note}
-                  </p>
-                )}
-              </div>
-
-              {/* 模型：可下拉可选，也可手填（各家模型名变动很快） */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-serif font-bold text-stone-800 dark:text-stone-200 flex items-center justify-between">
-                  <span>模型：</span>
-                  <span className="text-[10px] font-mono text-stone-500 dark:text-stone-400">
-                    可直接手填
+                  <span className="text-[10px] font-mono text-stone-500 font-normal">
+                    ({formData.apiEnabled ? '已启用自定义' : '公开降级'})
                   </span>
-                </label>
-                <input
-                  list="lingolog-model-options"
-                  value={formData.modelName}
-                  onChange={(e) => handleSettingChange({ modelName: e.target.value })}
-                  placeholder="选择或输入模型名"
-                  className="w-full text-xs p-2 rounded-xs border-2 border-stone-900 bg-white dark:bg-[#121c13] text-stone-900 dark:text-stone-100 font-mono shadow-[2px_2px_0px_#101711]"
-                />
-                <datalist id="lingolog-model-options">
-                  {activePreset.models.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-[#d49e3d] font-bold">
+                    AI ENGINE
+                  </span>
+                  <button className="text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 p-0.5">
+                    {isEngineExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
-              {/* Base URL：只有 OpenAI 兼容协议需要 */}
-              {activePreset.provider === 'openai-compatible' && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-serif font-bold text-stone-800 dark:text-stone-200">
-                    Base URL：
-                  </label>
-                  <input
-                    value={formData.customBaseUrl || ''}
-                    onChange={(e) => handleSettingChange({ customBaseUrl: e.target.value })}
-                    placeholder={activePreset.baseUrl || 'https://你的服务商地址/v1'}
-                    className="w-full text-xs p-2 rounded-xs border-2 border-stone-900 bg-white dark:bg-[#121c13] text-stone-900 dark:text-stone-100 font-mono shadow-[2px_2px_0px_#101711]"
-                  />
-                  <p className="text-[10px] font-serif text-stone-500 dark:text-stone-400">
-                    留空则用默认地址
-                    {activePreset.baseUrl ? `：${activePreset.baseUrl}` : '（需自己填）'}
-                  </p>
+              {!isEngineExpanded ? (
+                <div
+                  onClick={() => {
+                    sound.playKeyClick();
+                    setIsEngineExpanded(true);
+                  }}
+                  className="p-3 bg-white dark:bg-[#121c13] rounded-xs border border-stone-300 dark:border-stone-800 flex items-center justify-between text-xs font-mono cursor-pointer"
+                >
+                  <span className="text-stone-700 dark:text-stone-300">
+                    当前服务商: <strong>{activePreset.label}</strong> ({formData.modelName || '默认模型'})
+                  </span>
+                  <span className="text-[#b45309] dark:text-[#d49e3d] font-serif font-bold text-[11px]">
+                    点击展开配置 ▾
+                  </span>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-in fade-in duration-150">
+                  {/* 服务商选择 */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-serif font-bold text-stone-800 dark:text-stone-200">
+                      服务商：
+                    </label>
+                    <select
+                      value={activeProviderId}
+                      onChange={(e) => handleProviderChange(e.target.value)}
+                      className="w-full text-xs p-2 rounded-xs border-2 border-stone-900 bg-white dark:bg-[#121c13] text-stone-900 dark:text-stone-100 font-mono shadow-[2px_2px_0px_#101711] cursor-pointer"
+                    >
+                      {PROVIDER_PRESETS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    {activePreset.note && (
+                      <p className="text-[10px] font-mono text-stone-500 dark:text-stone-400">
+                        {activePreset.note}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 模型：可下拉可选，也可手填（各家模型名变动很快） */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-serif font-bold text-stone-800 dark:text-stone-200 flex items-center justify-between">
+                      <span>模型：</span>
+                      <span className="text-[10px] font-mono text-stone-500 dark:text-stone-400">
+                        可直接手填
+                      </span>
+                    </label>
+                    <input
+                      list="lingolog-model-options"
+                      value={formData.modelName}
+                      onChange={(e) => handleSettingChange({ modelName: e.target.value })}
+                      placeholder="选择或输入模型名"
+                      className="w-full text-xs p-2 rounded-xs border-2 border-stone-900 bg-white dark:bg-[#121c13] text-stone-900 dark:text-stone-100 font-mono shadow-[2px_2px_0px_#101711]"
+                    />
+                    <datalist id="lingolog-model-options">
+                      {activePreset.models.map((m) => (
+                        <option key={m} value={m} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  {/* Base URL：只有 OpenAI 兼容协议需要 */}
+                  {activePreset.provider === 'openai-compatible' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-serif font-bold text-stone-800 dark:text-stone-200">
+                        Base URL：
+                      </label>
+                      <input
+                        value={formData.customBaseUrl || ''}
+                        onChange={(e) => handleSettingChange({ customBaseUrl: e.target.value })}
+                        placeholder={activePreset.baseUrl || 'https://你的服务商地址/v1'}
+                        className="w-full text-xs p-2 rounded-xs border-2 border-stone-900 bg-white dark:bg-[#121c13] text-stone-900 dark:text-stone-100 font-mono shadow-[2px_2px_0px_#101711]"
+                      />
+                      <p className="text-[10px] font-serif text-stone-500 dark:text-stone-400">
+                        留空则用默认地址
+                        {activePreset.baseUrl ? `：${activePreset.baseUrl}` : '（需自己填）'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* API 密钥 + 开启 / 关闭引擎 */}
+                  <div className="space-y-2 pt-2 border-t border-dashed border-stone-300 dark:border-stone-700">
+                    <ApiEngineControls
+                      settings={formData}
+                      onSaveSettings={onSaveSettings}
+                      onToast={showToast}
+                      variant="full"
+                      idPrefix="lingolog-engine"
+                      onPickModel={(m) => {
+                        const next = { ...formData, modelName: m };
+                        setFormData(next);
+                        onSaveSettings(next);
+                      }}
+                    />
+                    <p className="text-[10px] font-serif text-stone-500 dark:text-stone-400 leading-relaxed pt-1.5 border-t border-dashed border-stone-300 dark:border-stone-700">
+                      <span className="font-bold">密钥隐私说明：</span>
+                      只保存在你这台设备的浏览器里，服务端不落盘、不写日志。开启引擎后，每次请求时它会发送到本应用服务端，仅用于转发给你选择的服务商（当前：{activePreset.label}）。
+                      <br />
+                      <span className="text-[#99332e] dark:text-[#e08b86] font-bold">
+                        如果这个网址是别人部署的，或者地址栏是 http:// 而非 https://，请不要填。
+                      </span>
+                    </p>
+                  </div>
                 </div>
               )}
-
-              {/* API 密钥 + 开启 / 关闭引擎 */}
-              <div className="space-y-2 pt-2 border-t border-dashed border-stone-300 dark:border-stone-700">
-                <ApiEngineControls
-                  settings={formData}
-                  onSaveSettings={onSaveSettings}
-                  onToast={showToast}
-                  variant="full"
-                  idPrefix="lingolog-engine"
-                  onPickModel={(m) => {
-                    // 不走 handleSettingChange：那条路会弹「配置已实时保存」，
-                    // 盖掉我们更该说的话（改了模型名还得再点一次开启）
-                    const next = { ...formData, modelName: m };
-                    setFormData(next);
-                    onSaveSettings(next);
-                  }}
-                />
-                <p className="text-[10px] font-serif text-stone-500 dark:text-stone-400 leading-relaxed pt-1.5 border-t border-dashed border-stone-300 dark:border-stone-700">
-                  <span className="font-bold">密钥隐私说明：</span>
-                  只保存在你这台设备的浏览器里，服务端不落盘、不写日志。开启引擎后，每次请求时它会发送到本应用服务端，仅用于转发给你选择的服务商（当前：{activePreset.label}）。
-                  <br />
-                  <span className="text-[#99332e] dark:text-[#e08b86] font-bold">
-                    如果这个网址是别人部署的，或者地址栏是 http:// 而非 https://，请不要填。
-                  </span>
-                </p>
-              </div>
             </div>
 
             {/* Archive Data Vault & Backup */}

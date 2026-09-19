@@ -15,6 +15,9 @@ import {
   LogIn,
   Cloud,
   Award,
+  Radio,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { AppSettings, UserProfile } from '../../types';
 import { sound } from '../../utils/audio';
@@ -23,6 +26,7 @@ import { requestNotificationPermission } from '../../utils/tts';
 import { ApiEngineControls } from '../common/ApiEngineControls';
 import { AVATAR_PRESETS } from '../../utils/avatars';
 import { getEquippedTitle } from '../../utils/titles';
+import { WechatReminderModal } from './WechatReminderModal';
 
 interface SideProfileDrawerProps {
   isOpen: boolean;
@@ -58,6 +62,8 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
   const [isEditingName, setIsEditingName] = useState(false);
   const [isSelectingAvatar, setIsSelectingAvatar] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [isWechatModalOpen, setIsWechatModalOpen] = useState(false);
+  const [isEngineExpanded, setIsEngineExpanded] = useState(Boolean(settings.apiEnabled));
 
   useEffect(() => {
     setFormData(settings);
@@ -373,63 +379,92 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
             </div>
           </div>
 
-          {/* Section 2: AI 推理模型与 API Key */}
+          {/* Section 2: AI 推理模型与 API Key (可折叠) */}
           <div className="bg-[#eee5c6] p-3.5 rounded-xs border-2 border-stone-900 shadow-[2px_2px_0px_#101711] space-y-2.5">
-            <div className="flex items-center gap-1.5 font-bold font-serif-display text-xs text-stone-900">
-              <Cpu className="w-3.5 h-3.5 text-[#d49e3d]" />
-              <span>智能翻译引擎</span>
+            <div
+              onClick={() => {
+                sound.playKeyClick();
+                setIsEngineExpanded(!isEngineExpanded);
+              }}
+              className="flex items-center justify-between cursor-pointer select-none"
+            >
+              <div className="flex items-center gap-1.5 font-bold font-serif-display text-xs text-stone-900">
+                <Cpu className="w-3.5 h-3.5 text-[#d49e3d]" />
+                <span>智能翻译引擎</span>
+                <span className="text-[10px] font-mono text-stone-600 font-normal">
+                  ({formData.apiEnabled ? '已启用' : '公开降级'})
+                </span>
+              </div>
+              <button className="text-stone-700 hover:text-stone-950 p-0.5">
+                {isEngineExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] text-stone-600 font-serif">服务商：</label>
-              <select
-                value={formData.apiProvider || DEFAULT_PROVIDER_ID}
-                onChange={(e) => {
-                  const preset = getPreset(e.target.value);
-                  handleSettingChange({
-                    apiProvider: e.target.value,
-                    modelName: preset.models[0] || '',
-                    customBaseUrl: '',
-                  });
+            {!isEngineExpanded ? (
+              <div
+                onClick={() => {
+                  sound.playKeyClick();
+                  setIsEngineExpanded(true);
                 }}
-                className="w-full text-xs p-1.5 rounded-xs border border-stone-900 bg-[#faf7ee] text-stone-900 font-mono"
+                className="text-[11px] text-stone-700 font-mono flex items-center justify-between bg-[#faf7ee] p-2 rounded-xs border border-stone-400 cursor-pointer"
               >
-                {PROVIDER_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <span>当前服务商: <strong>{getPreset(formData.apiProvider || DEFAULT_PROVIDER_ID).label}</strong></span>
+                <span className="text-[#b45309] font-serif font-bold text-[10px]">展开设置 ▾</span>
+              </div>
+            ) : (
+              <div className="space-y-2.5 animate-in fade-in duration-150">
+                <div className="space-y-1">
+                  <label className="text-[11px] text-stone-600 font-serif">服务商：</label>
+                  <select
+                    value={formData.apiProvider || DEFAULT_PROVIDER_ID}
+                    onChange={(e) => {
+                      const preset = getPreset(e.target.value);
+                      handleSettingChange({
+                        apiProvider: e.target.value,
+                        modelName: preset.models[0] || '',
+                        customBaseUrl: '',
+                      });
+                    }}
+                    className="w-full text-xs p-1.5 rounded-xs border border-stone-900 bg-[#faf7ee] text-stone-900 font-mono"
+                  >
+                    {PROVIDER_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] text-stone-600 font-serif">推理模型（可手填）：</label>
-              <input
-                list="lingolog-drawer-model-options"
-                value={formData.modelName}
-                onChange={(e) => handleSettingChange({ modelName: e.target.value })}
-                placeholder="选择或输入模型名"
-                className="w-full text-xs p-1.5 rounded-xs border border-stone-900 bg-[#faf7ee] text-stone-900 font-mono"
-              />
-              <datalist id="lingolog-drawer-model-options">
-                {getPreset(formData.apiProvider || DEFAULT_PROVIDER_ID).models.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] text-stone-600 font-serif">推理模型（可手填）：</label>
+                  <input
+                    list="lingolog-drawer-model-options"
+                    value={formData.modelName}
+                    onChange={(e) => handleSettingChange({ modelName: e.target.value })}
+                    placeholder="选择或输入模型名"
+                    className="w-full text-xs p-1.5 rounded-xs border border-stone-900 bg-[#faf7ee] text-stone-900 font-mono"
+                  />
+                  <datalist id="lingolog-drawer-model-options">
+                    {getPreset(formData.apiProvider || DEFAULT_PROVIDER_ID).models.map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                </div>
 
-            <div className="space-y-1.5 pt-1 border-t border-dashed border-stone-400">
-              <ApiEngineControls
-                settings={formData}
-                onSaveSettings={onSaveSettings}
-                variant="compact"
-                idPrefix="lingolog-drawer-engine"
-                onPickModel={(m) => handleSettingChange({ modelName: m })}
-              />
-              <p className="text-[10px] text-stone-500 font-serif leading-snug">
-                只存在本机浏览器里，服务端不落盘、不写日志。别人部署的网址不要填。
-              </p>
-            </div>
+                <div className="space-y-1.5 pt-1 border-t border-dashed border-stone-400">
+                  <ApiEngineControls
+                    settings={formData}
+                    onSaveSettings={onSaveSettings}
+                    variant="compact"
+                    idPrefix="lingolog-drawer-engine"
+                    onPickModel={(m) => handleSettingChange({ modelName: m })}
+                  />
+                  <p className="text-[10px] text-stone-500 font-serif leading-snug">
+                    只存在本机浏览器里，服务端不落盘、不写日志。别人部署的网址不要填。
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 3: 声音与调度 */}
@@ -484,6 +519,46 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
                 {formData.enableReminders ? '已开启' : '已关闭'}
               </button>
             </div>
+
+            {/* 微信每日未学状态栏提醒 */}
+            <div className="pt-2 border-t border-dashed border-stone-400 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1 text-stone-800 font-serif text-xs font-bold">
+                  <Radio className="w-3.5 h-3.5 text-[#99332e]" />
+                  <span>微信状态栏每日打卡提醒</span>
+                </div>
+                <button
+                  onClick={() => {
+                    sound.playKeyClick();
+                    setIsWechatModalOpen(true);
+                  }}
+                  className={`px-2.5 py-1 rounded-xs text-[11px] font-bold border border-stone-900 shadow-[1px_1px_0px_#101711] cursor-pointer transition-all active:translate-y-0.5 ${
+                    formData.wxpusherEnabled && formData.wxpusherUid
+                      ? 'bg-[#243427] text-[#d49e3d]'
+                      : 'bg-[#faf7ee] text-stone-700 hover:bg-white'
+                  }`}
+                >
+                  {formData.wxpusherEnabled && formData.wxpusherUid ? '已开启' : '配置绑定'}
+                </button>
+              </div>
+
+              <div
+                onClick={() => {
+                  sound.playKeyClick();
+                  setIsWechatModalOpen(true);
+                }}
+                className="flex items-center justify-between bg-[#faf7ee] p-2 rounded-xs border border-stone-400 text-[11px] font-mono cursor-pointer"
+              >
+                <span className="text-stone-600 truncate max-w-[190px]">
+                  {formData.wxpusherUid
+                    ? (formData.wxpusherUid.startsWith('SPT_') ? `SPT: ${formData.wxpusherUid.slice(0, 10)}...` : `UID: ${formData.wxpusherUid.slice(0, 10)}...`)
+                    : '尚未绑定接收端 (点此配置)'}
+                </span>
+                <span className="text-[#b45309] font-serif font-bold text-[10px]">
+                  {formData.wxpusherUid ? `每日 ${formData.reminderTime || '21:00'} >` : '去绑定 >'}
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* Section 4: 备份与安全 */}
@@ -535,6 +610,17 @@ export const SideProfileDrawer: React.FC<SideProfileDrawerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Wechat Daily Reminder Modal */}
+      <WechatReminderModal
+        isOpen={isWechatModalOpen}
+        onClose={() => setIsWechatModalOpen(false)}
+        settings={formData}
+        onSaveSettings={(newSettings) => {
+          setFormData(newSettings);
+          onSaveSettings(newSettings);
+        }}
+      />
     </div>
   );
 };

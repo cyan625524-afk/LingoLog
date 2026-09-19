@@ -16,8 +16,9 @@ import {
   getCurrentUser,
   syncCardsWithCloud,
   getLastCloudSyncTime,
+  fetchDailyReminderConfig,
 } from '../../utils/supabase';
-import { FlashCard, UserProfile } from '../../types';
+import { FlashCard, UserProfile, AppSettings } from '../../types';
 
 interface SupabaseAuthModalProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ interface SupabaseAuthModalProps {
   onUpdateCards: (newCards: FlashCard[]) => void;
   userProfile: UserProfile;
   onUpdateUserProfile: (p: UserProfile) => void;
+  onUpdateSettings?: React.Dispatch<React.SetStateAction<AppSettings>>;
 }
 
 export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
@@ -35,6 +37,7 @@ export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
   onUpdateCards,
   userProfile,
   onUpdateUserProfile,
+  onUpdateSettings,
 }) => {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [isAuthMode, setIsAuthMode] = useState<'signin' | 'signup'>('signin');
@@ -155,6 +158,25 @@ export const SupabaseAuthModal: React.FC<SupabaseAuthModalProps> = ({
         sound.playSuccess();
         onUpdateCards(stats.mergedCards);
         setLastSyncTime(getLastCloudSyncTime());
+
+        // 同步拉取微信打卡提醒配置
+        if (onUpdateSettings) {
+          try {
+            const rem = await fetchDailyReminderConfig();
+            if (rem && (rem.wxpusherUid || rem.enabled !== undefined)) {
+              onUpdateSettings((prev) => ({
+                ...prev,
+                wxpusherEnabled: rem.enabled ?? prev.wxpusherEnabled,
+                reminderTime: rem.reminderTime || prev.reminderTime || '21:00',
+                wxpusherUid: rem.wxpusherUid || prev.wxpusherUid || '',
+                wxpusherAppToken: rem.customAppToken || prev.wxpusherAppToken,
+              }));
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         setStatusNotice({
           type: 'success',
           text: `同步成功！云端现有 ${stats.cloudTotal} 张卡片（拉取新卡 ${stats.pulledCount} 张，上传 ${stats.pushedCount} 张）`,

@@ -35,6 +35,7 @@ import {
   syncCardsWithCloud,
   uploadSingleCardToCloud,
   deleteSingleCardFromCloud,
+  fetchDailyReminderConfig,
 } from './utils/supabase';
 
 // Utilities
@@ -370,6 +371,22 @@ export default function App() {
           const stats = await syncCardsWithCloud(cards);
           if (stats && mounted && stats.pulledCount > 0) {
             setCards(stats.mergedCards);
+          }
+
+          // 跨端自动同步微信每日打卡提醒配置（一方绑定，其他端自动同步已绑定状态）
+          const remConfig = await fetchDailyReminderConfig();
+          if (remConfig && mounted && (remConfig.wxpusherUid || remConfig.enabled !== undefined)) {
+            setSettings((prev) => {
+              const next = {
+                ...prev,
+                wxpusherEnabled: remConfig.enabled ?? prev.wxpusherEnabled,
+                reminderTime: remConfig.reminderTime || prev.reminderTime || '21:00',
+                wxpusherUid: remConfig.wxpusherUid || prev.wxpusherUid || '',
+                wxpusherAppToken: remConfig.customAppToken || prev.wxpusherAppToken,
+              };
+              saveSettings(next);
+              return next;
+            });
           }
         }
       } catch {
@@ -1038,6 +1055,7 @@ export default function App() {
           setUserProfile(newProfile);
           saveUserProfile(newProfile);
         }}
+        onUpdateSettings={setSettings}
       />
 
       {/* 组件旁引导：目标控件都在学习页，所以只在学习页挂载 */}

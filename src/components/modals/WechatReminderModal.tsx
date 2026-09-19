@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import { AppSettings } from '../../types';
-import { saveDailyReminderConfig } from '../../utils/supabase';
+import { saveDailyReminderConfig, fetchDailyReminderConfig } from '../../utils/supabase';
 
 interface WechatReminderModalProps {
   isOpen: boolean;
@@ -59,6 +59,25 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
       setCustomAppToken(settings.wxpusherAppToken || '');
       setToastMessage(null);
       setQrUrl(DEFAULT_OFFICIAL_QR);
+
+      // 如果本地没有 uid，尝试异步从云端检测拉取（保证跨端同步）
+      if (!settings.wxpusherUid) {
+        fetchDailyReminderConfig().then((cloudCfg) => {
+          if (cloudCfg && cloudCfg.wxpusherUid) {
+            setUid(cloudCfg.wxpusherUid);
+            setEnabled(cloudCfg.enabled);
+            if (cloudCfg.reminderTime) setReminderTime(cloudCfg.reminderTime);
+            if (cloudCfg.customAppToken) setCustomAppToken(cloudCfg.customAppToken);
+            onSaveSettings({
+              ...settings,
+              wxpusherUid: cloudCfg.wxpusherUid,
+              wxpusherEnabled: cloudCfg.enabled,
+              reminderTime: cloudCfg.reminderTime || settings.reminderTime || '21:00',
+              wxpusherAppToken: cloudCfg.customAppToken || settings.wxpusherAppToken,
+            });
+          }
+        }).catch(() => {});
+      }
 
       // 尝试向服务端获取专属带参二维码
       loadQrCode();

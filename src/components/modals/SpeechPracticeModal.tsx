@@ -17,6 +17,7 @@ import { sound } from '../../utils/audio';
 import { speakEnglishText, prefetchEnglishText } from '../../utils/tts';
 import { TelegramStamp } from '../common/TelegramStamp';
 import { SignalLamp } from '../common/SignalLamp';
+import { useSpeechCapture } from '../../utils/useSpeechCapture';
 
 interface SpeechPracticeModalProps {
   card: FlashCard | null;
@@ -35,11 +36,6 @@ interface SpeechPracticeModalProps {
   baseUrl?: string;
 }
 
-/**
- * 等麦克风权限响应的宽限时长（支持手机系统权限弹窗从容点击）。
- */
-const MIC_START_TIMEOUT_MS = 45000;
-
 export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   card,
   isOpen,
@@ -51,54 +47,62 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   baseUrl,
 }) => {
   const [practiceMode, setPracticeMode] = useState<'shadowing' | 'recall'>('shadowing');
-  const [isRecording, setIsRecording] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
-  const [recognizedText, setRecognizedText] = useState('');
   const [evalResult, setEvalResult] = useState<SpeechEvaluationResult | null>(null);
-  const [recordingError, setRecordingError] = useState<string | null>(null);
   const [selectedWordTip, setSelectedWordTip] = useState<SpeechWordAnalysis | null>(null);
   const [revealRecallText, setRevealRecallText] = useState(false);
-  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
   const [isPlayingRecorded, setIsPlayingRecorded] = useState(false);
-  const [useFallbackRecording, setUseFallbackRecording] = useState(false);
-  /**
-   * recognizedText 的来源：asr（浏览器实时识别）、recite（跟读/复述实训）、none
-   */
-  const [recognizedSource, setRecognizedSource] = useState<'none' | 'asr' | 'recite'>('none');
 
-  const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // 语音采集统一走共享 hook（record:true 保留录音回放与上传能力）。
+  // useSpeechCapture 内部用 continuous=true + onend 自动重连，不会因为一次
+  // 静默就让识别通道死掉——这正是过去「电脑端也看不到文字」的根本原因。
+  const {
+    isRecording,
+    transcript: recognizedText,
+    error: recordingError,
+    diag: asrDiag,
+    audioUrl: recordedAudioUrl,
+    audioBase64,
+    start: startCapture,
+    stop: stopCapture,
+    cancel: cancelCapture,
+    supported: asrSupported,
+  } = useSpeechCapture({ record: true });
+
+  // 录到音频后暂存 base64（用于提交 AI 评测），用 ref 避免异步读值竞态
+  const audioBase64Ref = useRef<string | null>(null);
+  useEffect(() => {
+    audioBase64Ref.current = audioBase64;
+  }, [audioBase64]);
+
   const recordedAudioElRef = useRef<HTMLAudioElement | null>(null);
-  const recordedAudioBase64Ref = useRef<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
-      setRecognizedText('');
-      setRecognizedSource('none');
-      recordedAudioBase64Ref.current = null;
+      cancelCapture();
+      setIsEvaluating(false);
       setEvalResult(null);
-      setRecordingError(null);
       setSelectedWordTip(null);
-      setIsRecording(false);
       setRevealRecallText(false);
-      setRecordedAudioUrl(null);
       setIsPlayingRecorded(false);
-      setUseFallbackRecording(false);
+      audioBase64Ref.current = null;
       if (card?.natural) {
         prefetchEnglishText(card.natural);
       }
+    } else {
+      cancelCapture();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, card]);
 
-  // Clean up recorded audio object URL
+  // 释放旧的 objectURL，防止内存泄漏
   useEffect(() => {
     return () => {
-      if (recordedAudioUrl) {
-        URL.revokeObjectURL(recordedAudioUrl);
+      if (recordedAudioElRef.current) {
+        recordedAudioElRef.current.pause();
       }
     };
-  }, [recordedAudioUrl]);
+  }, []);
 
   // Escape key listener
   useEffect(() => {
@@ -116,182 +120,17 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
 
   if (!isOpen || !card) return null;
 
-  /** 本机是否具备语音识别能力。没有它就不可能评发音，只能录音回放对比。 */
-  const supportsRecognition =
-    typeof window !== 'undefined' &&
-    Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
-
   const startRecording = async () => {
     sound.playKeyClick();
-    setRecognizedText('');
-    setRecognizedSource('none');
     setEvalResult(null);
     setSelectedWordTip(null);
-    setRecordingError(null);
-
-    if (recordedAudioUrl) {
-      URL.revokeObjectURL(recordedAudioUrl);
-      setRecordedAudioUrl(null);
-    }
-
-    let micStarted = false;
-
-    // 1. 录下真实音频（现代浏览器几乎都支持）。这一段是「录音回放对比」的基础，
-    //    也是本机没有语音识别能力时唯一诚实的反馈方式。
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const micPromise = navigator.mediaDevices.getUserMedia({ audio: true });
-        // 超时之后原生 promise 仍可能拒绝，先挂一个 no-op catch，避免未捕获错误
-        micPromise.catch(() => {});
-        const stream = await Promise.race([
-          micPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), MIC_START_TIMEOUT_MS)),
-        ]);
-
-        if (!stream) {
-          setRecordingError(
-            `麦克风没有响应（等了 ${MIC_START_TIMEOUT_MS / 1000} 秒）。手机上常见的原因是浏览器把权限弹窗吞掉了，请在浏览器设置里允许本站使用麦克风后重试。`
-          );
-          return;
-        }
-        
-        let mimeType = '';
-        if (typeof MediaRecorder !== 'undefined') {
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            mimeType = 'audio/webm;codecs=opus';
-          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            mimeType = 'audio/webm';
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            mimeType = 'audio/mp4';
-          } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
-            mimeType = 'audio/ogg';
-          }
-        }
-        
-        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        audioChunksRef.current = [];
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
-          }
-        };
-        recorder.onstop = () => {
-          stream.getTracks().forEach((track) => track.stop());
-          if (audioChunksRef.current.length > 0) {
-            const blobType = recorder.mimeType || audioChunksRef.current[0]?.type || 'audio/webm';
-            const blob = new Blob(audioChunksRef.current, { type: blobType });
-            const url = URL.createObjectURL(blob);
-            setRecordedAudioUrl(url);
-
-            try {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                const res = reader.result as string;
-                if (res) {
-                  const base64 = res.split(',')[1] || '';
-                  recordedAudioBase64Ref.current = base64;
-                }
-              };
-              reader.readAsDataURL(blob);
-            } catch {}
-          }
-          setRecognizedText((prev) => prev || '');
-          setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'none'));
-        };
-        recorder.start();
-        mediaRecorderRef.current = recorder;
-        setIsRecording(true);
-        micStarted = true;
-      } catch (err: any) {
-        console.warn('MediaRecorder error or mic denied:', err);
-        // 过去这里只认 NotAllowedError，其余失败（设备被占用、没有输入设备）一路 silent，
-        // 最后只能靠一句笼统的兜底提示。按错误类型分别说清楚，用户才知道该改什么。
-        const micErrName = String(err?.name || '');
-        if (micErrName === 'NotAllowedError' || micErrName === 'PermissionDeniedError') {
-          setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风访问。');
-        } else if (micErrName === 'NotFoundError' || micErrName === 'DevicesNotFoundError') {
-          setRecordingError('没有找到麦克风设备。');
-        } else if (micErrName === 'NotReadableError' || micErrName === 'TrackStartError') {
-          setRecordingError('麦克风被别的程序占用了，关掉其他录音应用再试。');
-        } else {
-          setRecordingError('麦克风启动失败，请确认已允许本站使用麦克风。');
-        }
-        return;
-      }
-    } else {
-      setRecordingError('这台浏览器不提供录音能力（请确保在 HTTPS 安全环境下访问）。');
-      return;
-    }
-
-    // 2. 语音识别（若可用且网络畅通则提供实时文字转写）
-    if (supportsRecognition) {
-      try {
-        const SpeechRecognition =
-          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.continuous = false;
-        recognition.interimResults = true;
-
-        recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((r: any) => r[0].transcript)
-            .join('')
-            .trim();
-          if (transcript) {
-            setRecognizedText(transcript);
-            // 真实来自识别引擎的文本
-            setRecognizedSource('asr');
-          }
-        };
-
-        recognition.onerror = (e: any) => {
-          console.warn('Speech recognition notice:', e);
-          if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-            setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风。');
-          } else if (e?.error === 'network') {
-            // Chrome 在国内无法直连 Google 语音服务器，静默转入真实录音回放与 AI 评测模式
-            setUseFallbackRecording(true);
-          }
-        };
-
-        recognition.onend = () => {
-          // 注意：绝不在 onend 中关闭 isRecording！MediaRecorder 依然在采集真实音频
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-        micStarted = true;
-      } catch (err) {
-        console.warn('Speech recognition failed to start:', err);
-        setUseFallbackRecording(true);
-      }
-    } else {
-      setUseFallbackRecording(true);
-    }
-
-    if (!micStarted && !recordingError) {
-      setRecordingError('未能启动录音，请确认已允许麦克风权限。');
-    }
+    await startCapture();
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     sound.playKeyClick();
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (e) {}
-    }
-    setIsRecording(false);
-    setTimeout(() => {
-      setRecognizedText((prev) => prev || '');
-      setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'none'));
-    }, 150);
+    // stop() 等待最终识别文本回来（手机端常晚 300~500ms），由 hook 内部处理
+    await stopCapture();
   };
 
   const playRecordedAudio = () => {
@@ -312,10 +151,13 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
   };
 
   const handleEvaluate = async () => {
-    const textToEvaluate = recognizedText.trim() || card.natural;
+    // ⚠️ 关键修复：不再用 || card.natural 兜底。
+    // 过去这一行 `recognizedText.trim() || card.natural` 会在识别为空时
+    // 把标准答案当作"用户说的"去评，结果永远是 97 分。
+    // 现在识别为空时，如实告知用户「没有识别到」，不伪造高分。
+    const textToEvaluate = recognizedText.trim();
     sound.playKeyClick();
     setIsEvaluating(true);
-    setRecordingError(null);
 
     try {
       const resp = await fetch('/api/evaluate-speech', {
@@ -325,7 +167,7 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
         body: JSON.stringify({
           targetText: card.natural,
           recognizedText: textToEvaluate,
-          audioBase64: recordedAudioBase64Ref.current || undefined,
+          audioBase64: audioBase64Ref.current || undefined,
           modelName,
           apiKey,
           provider,
@@ -516,6 +358,15 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
               {recordingError && (
                 <p className="text-[11px] text-[#99332e] font-bold">{recordingError}</p>
               )}
+              {/* 通道诊断行：让「没反应」变成看得见的状态 */}
+              {isRecording && asrDiag && (
+                <p className="text-[10px] font-mono text-stone-500">{asrDiag}</p>
+              )}
+              {isRecording && !asrSupported && (
+                <p className="text-[10px] text-amber-700 font-mono">
+                  此浏览器不支持实时识别，录音回放仍可用
+                </p>
+              )}
             </div>
 
             {/* Big Mic Button */}
@@ -570,7 +421,7 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
             {recognizedText && (
               <div className="w-full bg-[#faf7ee] p-2.5 rounded-xs border border-stone-900 shadow-[1px_1px_0px_#101711] space-y-1 text-center">
                 <span className="text-[10px] uppercase font-mono text-stone-500 font-bold">
-                  {recognizedSource === 'asr' ? '电台实时识别结果' : '电台跟读复述对照'}
+                  电台实时识别结果
                 </span>
                 <p className="text-xs font-mono font-bold text-stone-900">
                   "{recognizedText}"

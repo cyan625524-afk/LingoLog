@@ -300,17 +300,22 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   // 手动点击「完成说并提交判定」
   const stopRecordingAndEvaluate = () => {
     sound.playKeyClick();
+
+    // ⚠️ 关键：先停止识别，但不要立刻 null 掉 recognitionRef！
+    // 手机 Edge 上 recognition.stop() 是异步的，onresult 事件会在 stop() 之后才触发。
+    // 如果立刻 null，onresult 无法更新 recognizedTextRef，导致识别到的文字丢失。
+    // 仿照 SpeechPracticeModal.stopRecording() 的处理方式，让 ref 保持存活。
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch {}
-      recognitionRef.current = null;
+      // ← 故意不在这里 null，等 500ms 后在 timeout 内再清理
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       try {
         mediaRecorderRef.current.stop();
       } catch {}
-      mediaRecorderRef.current = null;
+      // ← 同上，延迟清理
     }
     if (mediaStreamRef.current) {
       try {
@@ -321,11 +326,15 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     setIsRecording(false);
     isRecordingRef.current = false;
 
-    // 延时 150ms 等待最后的识别事件派发完毕（对齐 SpeechPracticeModal 的稳定做法）
+    // 延时 500ms（手机端 onresult 最晚在 stop() 后约 300-400ms 才到），
+    // 等最后一个识别结果写入 recognizedTextRef 之后，再读值、清理、评测。
     setTimeout(() => {
       const finalText = (recognizedTextRef.current || recognizedText).trim();
+      // 延迟清理 ref，确保读值之后才释放
+      recognitionRef.current = null;
+      mediaRecorderRef.current = null;
       evaluateSpokenText(finalText);
-    }, 150);
+    }, 500);
   };
 
   // 用户未开口直接看答案（严格标记为 revealed，仅允许选择 AGAIN）

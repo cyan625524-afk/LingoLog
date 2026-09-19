@@ -4,25 +4,25 @@
 // FlashcardReviewModal 里各写了一遍，两处的注释都写着「100% 对齐」，
 // 但实际表现不同 —— 手机 Edge 上「点卡片」能识别，「复习」一个词都收不到。
 //
-// 差异不在那些明显的地方，而在两个时序细节：
-//
+// 根本原因（两条）：
 //   1. 启动延迟。旧实现在 recognition.start() 之前先 await getUserMedia。
-//      手机上授权/建流要几百毫秒到几秒，而识别通道要等这一步走完才打开。
+//      手机上授权/建流要几百毫秒到几秒，识别通道要等这一步走完才打开。
 //      用户点完按钮「立刻开口」，说的那一段正好落在通道打开之前的盲区里。
 //
 //   2. 通道自断。continuous = false 的识别在第一次静默之后就会 onend，
-//      而两边的 onend 里都只写了一行注释、什么都没做 —— 通道就此死掉，
-//      之后再说多少话也没人听，界面上也不会有任何提示。
+//      而两边的 onend 里都只写了一行注释、什么都没做 —— 通道就此死掉。
 //
 // 这里的做法：
-//   · 识别自己会申请麦克风，所以默认不预开流 —— 启动紧贴用户手势，没有盲区。
+//   · 识别自己会申请麦克风，默认不预开流 —— 启动紧贴用户手势，没有盲区。
 //   · continuous = true；onend 时如果用户还在说，就自动续上一个新实例。
+//   · 快速失败检测：若连续多次 start→onend 都没有 onresult，判定本设备
+//     的识别服务不可用，停止重启，给出明确提示，不再显示「正在重新连接」。
 //   · 所有错误码都映射成能看懂的中文，并在 diag 里留一行通道状态。
 //   · 需要真实录音（回放 / 上传）时才额外开 MediaRecorder，由 record 开关控制。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-/** 识别引擎的错误码 → 给人看的话。用户看到「没反应」多半就是这里的某一条。 */
+/** 识别引擎的错误码 → 给人看的话。 */
 const ERROR_TEXT: Record<string, string> = {
   'not-allowed': '麦克风权限被拒绝，请在浏览器设置中允许本站使用麦克风。',
   'service-not-allowed': '浏览器拒绝了语音识别服务，请检查系统的麦克风与语音权限。',
@@ -92,7 +92,7 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
   /** 正在收尾，禁止一切自动重启 */
   const stoppingRef = useRef(false);
   const transcriptRef = useRef('');
-  /** 当前活着的识别实例。onend 之后要换新的，所以每次 open 都覆盖它 */
+  /** 当前活着的识别实例 */
   const currentRecRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -100,17 +100,30 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * 「之前那些识别会话」已经确定下来的文本。
-   *
-   * 为什么需要它：continuous = true 的识别器在静默超时后依然会 onend，
-   * 我们重启出来的**新实例 event.results 从空开始**。如果 onresult 直接
-   * `transcriptRef.current = text`，重启前说过的词会被整段覆盖 —— 而复习流程
-   * 天然带静默期（「请在脑中检索该英文表达」），正好踩在这个坑上。
+   * 新实例 event.results 从空开始，必须把老会话文本单独保存再拼接，不能覆盖。
    */
   const committedRef = useRef('');
-  /** stop() 在等最终结果时的收尾函数，交给 onend 触发 */
   const pendingFinishRef = useRef<(() => void) | null>(null);
-  /** stop() 返回的 promise。重复调用必须拿到同一个，否则前一个永远不 resolve */
   const stopPromiseRef = useRef<Promise<string> | null>(null);
+
+  /**
+   * 快速失败检测 —— 防止手机端 start→onend→restart 无限循环。
+   *
+   * 部分 Android / 手机 Edge 的 SpeechRecognition 接口存在但实际无法工作：
+   * start() 后立刻 onend，没有任何 onresult，我们重启，再次立刻 onend……
+   *
+   * 规则：
+   *   - 每次 openRecognition 创建新实例时，该实例有一个局部的 sessionHadResult=false。
+   *   - onresult 触发时，sessionHadResult 置 true，同时累计失败计数归零。
+   *   - onend 时：
+   *       * sessionHadResult=true  → 正常静默超时，累计失败计数归零，可以重启。
+   *       * sessionHadResult=false → 本轮没有任何结果，累计失败 +1。
+   *         若累计 >= MAX_FAIL_BEFORE_GIVE_UP，停止重启，设置明确错误。
+   *
+   * 注意：network 错误会让 onresult 永远不来，但不是设备不支持，单独处理。
+   */
+  const cumFailCountRef = useRef(0);
+  const MAX_FAIL_BEFORE_GIVE_UP = 3;
 
   const clearRestart = () => {
     if (restartTimerRef.current) {
@@ -119,7 +132,7 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
     }
   };
 
-  /** 拼接两段识别文本，中间补空格，免得 "I want to" + "buy it" 粘成一个词 */
+  /** 拼接两段识别文本，中间补空格 */
   const mergeText = (a: string, b: string) => {
     const left = a.trim();
     const right = b.trim();
@@ -151,8 +164,10 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
 
     rec.onstart = () => setDiag('识别通道已开启，正在听…');
 
-    // 每次新建实例都会重新进入这个闭包，所以 instanceText 天然就等于「本次会话」的文本。
+    // 每次新建实例都会重新进入这个闭包，所以 instanceText 天然等于「本次会话」的文本。
     let instanceText = '';
+    // 本轮是否收到过 onresult —— 用于快速失败检测
+    let sessionHadResult = false;
 
     rec.onresult = (event: any) => {
       let text = '';
@@ -162,8 +177,11 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
       text = text.trim();
       if (!text) return;
 
+      // 本轮收到了结果 → 引擎正常 → 累计失败归零
+      sessionHadResult = true;
+      cumFailCountRef.current = 0;
+
       instanceText = text;
-      // 累加而不是覆盖 —— 见 committedRef 的说明。
       const full = mergeText(committedRef.current, instanceText);
       transcriptRef.current = full;
       setTranscript(full);
@@ -172,33 +190,58 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
     rec.onerror = (e: any) => {
       const code = String(e?.error || 'unknown');
       if (code === 'aborted') return; // 我们自己取消的，不算错
+
+      // network 错误：识别服务连不上，但不是「设备不支持」，不计入快速失败计数
       setDiag(`识别通道报错：${code}`);
       const msg = ERROR_TEXT[code];
       if (msg) setError(msg);
+
+      // network 错误后，本轮也算「有结果」（避免因网络错误触发设备不支持的判定）
+      if (code === 'network') {
+        sessionHadResult = true;
+      }
     };
 
     rec.onend = () => {
-      // 先把本次会话的文本并入「已确定」部分。
-      // 不论接下来是重启还是收尾，都不能让这段文本跟着实例一起消失。
+      // 先把本次会话的文本并入「已确定」部分
       if (instanceText) {
         committedRef.current = mergeText(committedRef.current, instanceText);
         instanceText = '';
       }
 
       if (stoppingRef.current) {
-        // 用户已经点了「完成说」，stop() 正在等最终文本 —— 此刻它已经确定了，
-        // 交给它收尾比死等固定时长更快，也不会漏掉尾句。
+        // 用户已经点了「完成说」，stop() 正在等最终文本
         const finish = pendingFinishRef.current;
         pendingFinishRef.current = null;
         if (finish) setTimeout(finish, 50);
         return;
       }
 
-      // 用户没点「完成说」，通道却自己 end 了（静默超时 / 引擎轮转）。
-      // 这正是过去最致命的地方：旧实现在这里什么都不做，通道就此死掉，
-      // 之后再说多少话也没人听，界面上也一个字都不提示。
       if (!activeRef.current) return;
 
+      // ── 快速失败检测 ──────────────────────────────────────────────────────
+      if (!sessionHadResult) {
+        // 本轮从头到尾没有收到 onresult
+        cumFailCountRef.current += 1;
+
+        if (cumFailCountRef.current >= MAX_FAIL_BEFORE_GIVE_UP) {
+          // 连续多次启动都没有任何结果 → 本设备/网络不支持语音识别
+          activeRef.current = false;
+          setIsRecording(false);
+          setDiag('');
+          setError(
+            '当前设备或网络无法使用语音识别（连续启动未收到任何结果）。' +
+            '手机端可能是浏览器权限或识别服务限制，建议使用桌面端。'
+          );
+          return;
+        }
+      } else {
+        // 本轮有结果 → 正常静默，归零
+        cumFailCountRef.current = 0;
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
+      // 用户还在「正在说」状态，通道静默超时，自动重启
       setDiag('识别通道已暂停，正在重新连接…');
       clearRestart();
       restartTimerRef.current = setTimeout(() => {
@@ -217,7 +260,7 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
   };
 
   const start = useCallback(async () => {
-    if (activeRef.current) return; // 幂等：手快连点两次不会开出两条通道
+    if (activeRef.current) return; // 幂等
     if (!supported) {
       setError(
         '这台设备的浏览器不提供语音识别接口（SpeechRecognition 未定义），无法自动判定。可直接点「直接看答案」。'
@@ -232,16 +275,15 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
     setDiag('');
     setTranscript('');
     transcriptRef.current = '';
-    // 新的一轮：清掉上一轮的累积文本与收尾句柄。
-    // 上一轮若还有 stop() 挂着，它自己的 1.5 秒兜底会把它收掉，不会悬着。
     committedRef.current = '';
     pendingFinishRef.current = null;
     stopPromiseRef.current = null;
+    // 新的一轮，重置快速失败计数
+    cumFailCountRef.current = 0;
     setAudioUrl(null);
     setAudioBase64(null);
 
-    // 需要回放/上传时才开录音。注意这一步要 await，会推迟识别启动 ——
-    // 复习流程不需要录音，所以不传 record，识别能在用户手势的同一刻开始听。
+    // 需要回放/上传时才开录音
     if (record) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -305,8 +347,6 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
   }, [record, supported]);
 
   const stop = useCallback((): Promise<string> => {
-    // 手快连点两次「完成说」：第二次必须拿到同一个 promise，
-    // 否则第一次那个永远不会 resolve，界面就卡在「判定中」。
     if (stopPromiseRef.current) return stopPromiseRef.current;
     if (!activeRef.current && !currentRecRef.current) {
       return Promise.resolve(transcriptRef.current.trim());
@@ -327,7 +367,6 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
         settled = true;
         pendingFinishRef.current = null;
         stopPromiseRef.current = null;
-        // 只在「还是本实例」时才清引用：避免把 start() 之后新开的通道误清掉
         if (currentRecRef.current === rec) currentRecRef.current = null;
         if (stream && streamRef.current === stream) {
           try {
@@ -339,15 +378,11 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
       };
 
       pendingFinishRef.current = finish;
-      // 正常路径由 onend 触发 —— 它一收到就说明音频已经送去识别并且回传完毕，
-      // 所以通常几十毫秒就能拿到最终文本。
-      // 这里留一个兜底：个别浏览器停止时不发 onend，不能无限等下去。
+      // 兜底：个别浏览器停止时不发 onend
       setTimeout(finish, 1500);
     });
     stopPromiseRef.current = promise;
 
-    // 只 stop()，不 abort()：abort 会把「已经识别到、但还没回传」的结果丢掉。
-    // 也先别关麦克风轨道 —— stop() 之后这段音频还要再送去识别一次。
     try {
       rec?.stop();
     } catch {}
@@ -391,14 +426,12 @@ export function useSpeechCapture(options: UseSpeechCaptureOptions = {}): SpeechC
     setError(null);
     setDiag('');
 
-    // 若此刻还有 stop() 在等结果，让它立刻收尾。
-    // 否则它会在 1.5 秒后带着已过期的文本 resolve，把判定写到别的卡片上。
     const finish = pendingFinishRef.current;
     pendingFinishRef.current = null;
     if (finish) finish();
   }, []);
 
-  // 卸载时确保麦克风被释放，否则手机上会一直留着「正在录音」的系统提示
+  // 卸载时确保麦克风被释放
   useEffect(() => {
     return () => {
       activeRef.current = false;

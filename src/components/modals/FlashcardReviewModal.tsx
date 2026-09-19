@@ -29,6 +29,7 @@ import {
   getReviewModeAndPrompt,
   RecallEvaluation,
 } from '../../utils/recall';
+import { useSpeechCapture } from '../../utils/useSpeechCapture';
 
 interface FlashcardReviewModalProps {
   cards: FlashCard[];
@@ -39,11 +40,6 @@ interface FlashcardReviewModalProps {
   onUndoLastGrade: (entry: ReviewHistoryEntry) => void;
   historyStack: ReviewHistoryEntry[];
 }
-
-/**
- * 等麦克风权限响应的宽限时长（与 SpeechPracticeModal 完全一致）
- */
-const MIC_START_TIMEOUT_MS = 45000;
 
 export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   cards,
@@ -58,23 +54,26 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   const [isFinished, setIsFinished] = useState(false);
   const [reviewedCount, setReviewedCount] = useState(0);
 
-  // 强制提取与语音识别状态
-  const [isRecording, setIsRecording] = useState(false);
-  const [recognizedText, setRecognizedText] = useState('');
+  // 强制提取状态
   const [isEvaluated, setIsEvaluated] = useState(false);
   const [isRevealedDirectly, setIsRevealedDirectly] = useState(false);
   const [recallEvaluation, setRecallEvaluation] = useState<RecallEvaluation | null>(null);
-  const [recordingError, setRecordingError] = useState<string | null>(null);
 
   // 详细解析折叠状态（手机端默认折叠，防止卡片被撑得过长）
   const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
 
-  const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const isRecordingRef = useRef(false);
-  const recognizedTextRef = useRef('');
+  // 语音采集统一走 useSpeechCapture。
+  // 复习只要「听懂用户说了什么」，不需要留存录音，所以不开 record ——
+  // 那一步的 getUserMedia 会把识别启动推迟到用户手势之后，正是过去漏词的原因。
+  const {
+    isRecording,
+    transcript: recognizedText,
+    error: recordingError,
+    diag: asrDiag,
+    start: startCapture,
+    stop: stopCapture,
+    cancel: cancelCapture,
+  } = useSpeechCapture({ record: false });
 
   // Chronological order map (earliest added = No.001)
   const cardChronologicalMap = useMemo(() => {
@@ -83,46 +82,23 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
 
   const currentCard = cards[currentIndex];
 
+  // 识别结果可能比用户点「完成说」晚几百毫秒才回来，那段时间里卡片可能已经换了。
+  // 用 ref 记住「此刻显示的是哪张」，结果回来时对一下，避免把上一张的判定写到下一张上。
+  const currentCardRef = useRef(currentCard);
+  currentCardRef.current = currentCard;
+
   // 换场景复述与提示语计算
   const { mode: currentMode, promptZh } = useMemo(() => {
     if (!currentCard) return { mode: 'original' as const, promptZh: '' };
     return getReviewModeAndPrompt(currentCard);
   }, [currentCard]);
 
-  // 停止所有录音与识别通道并彻底释放麦克风硬件
-  const stopCurrentAudioTracks = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch {}
-      recognitionRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      mediaRecorderRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      try {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      } catch {}
-      mediaStreamRef.current = null;
-    }
-    isRecordingRef.current = false;
-  };
-
-  // 重置单张卡片的交互状态
+  // 重置单张卡片的交互状态（含释放麦克风）
   const resetCardState = () => {
-    stopCurrentAudioTracks();
-    setIsRecording(false);
-    isRecordingRef.current = false;
-    setRecognizedText('');
-    recognizedTextRef.current = '';
+    cancelCapture();
     setIsEvaluated(false);
     setIsRevealedDirectly(false);
     setRecallEvaluation(null);
-    setRecordingError(null);
     setIsExplanationExpanded(false);
   };
 
@@ -134,7 +110,7 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
       setReviewedCount(0);
       resetCardState();
     } else {
-      stopCurrentAudioTracks();
+      cancelCapture();
     }
   }, [isOpen, cards]);
 
@@ -145,134 +121,23 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
     }
   }, [isOpen, currentCard]);
 
-  // 组件卸载时释放资源
-  useEffect(() => {
-    return () => {
-      stopCurrentAudioTracks();
-    };
-  }, []);
+  // 麦克风的释放在 useSpeechCapture 内部处理（组件卸载时它自带 cleanup），
+  // 这里不再重复一遍 —— 两份清理代码正是过去「这边改了、那边漏了」的来源。
 
   /**
-   * 启动录音与语音识别（与 SpeechPracticeModal 经过实测验证的手机端底层实现 100% 对齐）
+   * 开始说。
+   *
+   * 这里不做任何预处理，也不预先申请麦克风 —— 识别通道自己会申请。
+   * 旧实现先 await getUserMedia、再 recognition.start()，手机上一来一回要
+   * 几百毫秒到几秒；用户点完按钮立刻开口的那句话，正好落在通道打开之前的
+   * 盲区里。再加上 continuous=false 且 onend 里什么都不做，通道随即自断，
+   * 结果就是「一个词都收不到」。现在 startCapture() 是第一个动作，
+   * 通道紧贴着这次点击打开，而且 onend 会自动续上。
    */
   const startRecording = async () => {
     if (!currentCard) return;
     sound.playKeyClick();
-    setRecordingError(null);
-    setRecognizedText('');
-    recognizedTextRef.current = '';
-
-    let micStarted = false;
-
-    // 1. 录下真实音频（与 SpeechPracticeModal 完全一致）
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const micPromise = navigator.mediaDevices.getUserMedia({ audio: true });
-        micPromise.catch(() => {});
-        const stream = await Promise.race([
-          micPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), MIC_START_TIMEOUT_MS)),
-        ]);
-
-        if (!stream) {
-          setRecordingError(
-            `麦克风没有响应（等了 ${MIC_START_TIMEOUT_MS / 1000} 秒）。手机上常见的原因是浏览器把权限弹窗吞掉了，请在浏览器设置里允许本站使用麦克风后重试。`
-          );
-          return;
-        }
-
-        mediaStreamRef.current = stream;
-
-        let mimeType = '';
-        if (typeof MediaRecorder !== 'undefined') {
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            mimeType = 'audio/webm;codecs=opus';
-          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            mimeType = 'audio/webm';
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            mimeType = 'audio/mp4';
-          } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
-            mimeType = 'audio/ogg';
-          }
-        }
-
-        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        audioChunksRef.current = [];
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
-          }
-        };
-        recorder.onstop = () => {
-          stream.getTracks().forEach((track) => track.stop());
-        };
-        recorder.start();
-        mediaRecorderRef.current = recorder;
-        setIsRecording(true);
-        isRecordingRef.current = true;
-        micStarted = true;
-      } catch (err: any) {
-        console.warn('Microphone error or permission denied:', err);
-        const errName = String(err?.name || '');
-        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-          setRecordingError('麦克风权限被拒绝，请在浏览器或手机权限设置中允许访问麦克风。');
-        } else {
-          setRecordingError('未能启动麦克风，请确认已允许麦克风访问。');
-        }
-        return;
-      }
-    } else {
-      setRecordingError('这台浏览器不提供录音能力（请确保在 HTTPS 下访问）。');
-      return;
-    }
-
-    // 2. 语音识别（SpeechRecognition，与 SpeechPracticeModal 完全一致）
-    const supportsRecognition =
-      typeof window !== 'undefined' &&
-      Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
-
-    if (supportsRecognition) {
-      try {
-        const SpeechRecognition =
-          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.continuous = false; // 手机端必须为 false，对齐 SpeechPracticeModal
-        recognition.interimResults = true;
-
-        recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((r: any) => r[0].transcript)
-            .join('')
-            .trim();
-          if (transcript) {
-            setRecognizedText(transcript);
-            recognizedTextRef.current = transcript;
-          }
-        };
-
-        recognition.onerror = (e: any) => {
-          console.warn('Speech recognition notice:', e);
-          if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-            setRecordingError('麦克风权限被拒绝，请在浏览器设置中允许麦克风。');
-          }
-        };
-
-        recognition.onend = () => {
-          // ⚠️ 注意：绝不在 onend 中关闭 isRecording！MediaRecorder 依然在采集真实音频
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-        micStarted = true;
-      } catch (err) {
-        console.warn('Speech recognition failed to start:', err);
-      }
-    }
-
-    if (!micStarted && !recordingError) {
-      setRecordingError('未能启动录音，请确认已允许麦克风权限。');
-    }
+    await startCapture();
   };
 
   // 纯前端本地自动覆盖率判定逻辑
@@ -298,51 +163,20 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
   };
 
   // 手动点击「完成说并提交判定」
-  const stopRecordingAndEvaluate = () => {
+  const stopRecordingAndEvaluate = async () => {
     sound.playKeyClick();
-
-    // ⚠️ 关键：先停止识别，但不要立刻 null 掉 recognitionRef！
-    // 手机 Edge 上 recognition.stop() 是异步的，onresult 事件会在 stop() 之后才触发。
-    // 如果立刻 null，onresult 无法更新 recognizedTextRef，导致识别到的文字丢失。
-    // 仿照 SpeechPracticeModal.stopRecording() 的处理方式，让 ref 保持存活。
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      // ← 故意不在这里 null，等 500ms 后在 timeout 内再清理
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      // ← 同上，延迟清理
-    }
-    if (mediaStreamRef.current) {
-      try {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      } catch {}
-      mediaStreamRef.current = null;
-    }
-    setIsRecording(false);
-    isRecordingRef.current = false;
-
-    // 延时 500ms（手机端 onresult 最晚在 stop() 后约 300-400ms 才到），
-    // 等最后一个识别结果写入 recognizedTextRef 之后，再读值、清理、评测。
-    setTimeout(() => {
-      const finalText = (recognizedTextRef.current || recognizedText).trim();
-      // 延迟清理 ref，确保读值之后才释放
-      recognitionRef.current = null;
-      mediaRecorderRef.current = null;
-      evaluateSpokenText(finalText);
-    }, 500);
+    // stopCapture() 会等最终识别结果回传（手机端常晚到 300~500ms）。
+    // 记下此刻是哪张卡：等待期间若已切卡 / 关窗，这个结果就不该再往界面上写。
+    const cardAtStop = currentCard;
+    const finalText = await stopCapture();
+    if (currentCardRef.current !== cardAtStop) return;
+    evaluateSpokenText(finalText);
   };
 
   // 用户未开口直接看答案（严格标记为 revealed，仅允许选择 AGAIN）
   const handleRevealDirectly = () => {
     sound.playCardFlip();
-    stopCurrentAudioTracks();
-    setIsRecording(false);
-    isRecordingRef.current = false;
+    cancelCapture();
     setIsRevealedDirectly(true);
     setIsEvaluated(true);
     setRecallEvaluation({
@@ -601,6 +435,9 @@ export const FlashcardReviewModal: React.FC<FlashcardReviewModalProps> = ({
                           </div>
                           <div className="font-serif-display text-base text-stone-100 min-h-[32px] italic">
                             {recognizedText ? `"${recognizedText}"` : '请大声说出英文，说完点击下方完成...'}
+                          </div>
+                          <div className="text-[10px] font-mono text-stone-500 pt-0.5">
+                            {asrDiag || '正在打开识别通道…'}
                           </div>
                         </div>
                       )}

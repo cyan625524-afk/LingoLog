@@ -227,16 +227,17 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                       原稿：{card.original}
                     </div>
 
-                    {/* English Output (or cloze mask) */}
-                    <div className="font-serif-display text-base sm:text-lg font-black text-stone-950 leading-snug">
-                      {isRevealed ? (
-                        card.natural
-                      ) : (
-                        <span className="text-[#99332e] font-mono text-sm tracking-wider">
-                          {card.natural.split(' ').map((w) => w[0] + '_'.repeat(Math.max(1, w.length - 1))).join(' ')}
-                        </span>
-                      )}
-                    </div>
+                    {/* English Output (默认隐藏，点击右下角翻看才显示) */}
+                    {isRevealed ? (
+                      <div className="font-serif-display text-base sm:text-lg font-black text-stone-950 leading-snug animate-in fade-in duration-150">
+                        {card.natural}
+                      </div>
+                    ) : (
+                      <div className="font-mono text-xs text-stone-500 italic py-1 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-400 inline-block" />
+                        <span>[ 译文已封存 · 点击右下角翻看 ]</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Bottom Controls */}

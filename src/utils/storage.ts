@@ -1,4 +1,4 @@
-import { FlashCard, DailyQuest, ShopItem, AppSettings, HeatmapDay, StoryItem, CardCategory, CARD_CATEGORIES, UserProfile } from '../types';
+import { FlashCard, DailyQuest, ShopItem, AppSettings, HeatmapDay, StoryItem, CardCategory, CARD_CATEGORIES, UserProfile, MasteryLevel } from '../types';
 import { INITIAL_CARDS, INITIAL_QUESTS, INITIAL_SHOP_ITEMS, DEFAULT_SETTINGS } from '../data/initialData';
 import { getPreset, reviveModelName } from '../data/providers';
 import { formatDate } from './ebbinghaus';
@@ -168,13 +168,48 @@ export function sanitizeFlashCard(raw: any, index: number = 0): FlashCard {
     raw.lastReviewedAt ||
     (historyList.length > 0 ? historyList[historyList.length - 1] : undefined);
 
-  const masteryLevel =
-    raw.masteryLevel ||
-    (intervalStage >= 4 || reviewCount >= 4
-      ? 'mastered'
-      : reviewCount > 0
-      ? 'uncertain'
-      : 'learning');
+  // 归一化 recallStats
+  const recallStats =
+    raw.recallStats && typeof raw.recallStats === 'object'
+      ? {
+          attempts: Number(raw.recallStats.attempts) || 0,
+          successful: Number(raw.recallStats.successful) || 0,
+          partial: Number(raw.recallStats.partial) || 0,
+          failed: Number(raw.recallStats.failed) || 0,
+          revealed: Number(raw.recallStats.revealed) || 0,
+          transferPassCount: Number(raw.recallStats.transferPassCount) || 0,
+        }
+      : {
+          attempts: 0,
+          successful: 0,
+          partial: 0,
+          failed: 0,
+          revealed: 0,
+          transferPassCount: 0,
+        };
+
+  // 归一化 transferPrompts（≤3 条）
+  const transferPrompts = Array.isArray(raw.transferPrompts)
+    ? raw.transferPrompts
+        .filter((p: any) => typeof p === 'string' && p.trim().length > 0)
+        .slice(0, 3)
+    : undefined;
+
+  // 严谨的 masteryLevel 推导规则（避免导入数据被旧规则直接判为 mastered）
+  const effectiveAttempts = recallStats.successful + recallStats.partial + recallStats.failed;
+  const isMasteredByRecall =
+    effectiveAttempts >= 4 &&
+    recallStats.successful >= 3 &&
+    (!transferPrompts || (recallStats.transferPassCount || 0) >= 1);
+
+  let masteryLevel: MasteryLevel = 'learning';
+  if (raw.masteryLevel === 'mastered') {
+    masteryLevel = isMasteredByRecall || (intervalStage >= 4 && reviewCount >= 5) ? 'mastered' : 'uncertain';
+  } else if (raw.masteryLevel === 'uncertain' || raw.masteryLevel === 'learning') {
+    masteryLevel = isMasteredByRecall ? 'mastered' : raw.masteryLevel;
+  } else {
+    masteryLevel = isMasteredByRecall ? 'mastered' : reviewCount > 0 ? 'uncertain' : 'learning';
+  }
 
   const isFavorite = Boolean(raw.isFavorite ?? raw.isStarred);
   const userNotes = raw.userNotes ?? raw.userNote ?? undefined;
@@ -212,6 +247,10 @@ export function sanitizeFlashCard(raw: any, index: number = 0): FlashCard {
     spokenDuration: raw.spokenDuration,
     lastSpeakDuration: raw.lastSpeakDuration,
     speechRecords: raw.speechRecords,
+    transferPrompts,
+    recallStats,
+    lastRecallResult: raw.lastRecallResult,
+    lastReviewMode: raw.lastReviewMode,
   };
 }
 

@@ -195,8 +195,8 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
               reader.readAsDataURL(blob);
             } catch {}
           }
-          setRecognizedText((prev) => prev || card.natural);
-          setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'recite'));
+          setRecognizedText((prev) => prev || '');
+          setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'none'));
         };
         recorder.start();
         mediaRecorderRef.current = recorder;
@@ -289,8 +289,8 @@ export const SpeechPracticeModal: React.FC<SpeechPracticeModalProps> = ({
     }
     setIsRecording(false);
     setTimeout(() => {
-      setRecognizedText((prev) => prev || card.natural);
-      setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'recite'));
+      setRecognizedText((prev) => prev || '');
+      setRecognizedSource((prev) => (prev === 'asr' ? 'asr' : 'none'));
     }, 150);
   };
 

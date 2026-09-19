@@ -10,6 +10,7 @@ export interface ParsedCardDraft {
   phrases: PhraseItem[];
   redHighlights?: string[];
   variants?: RegisterVariants;
+  transferPrompts?: string[];
 }
 
 /**
@@ -207,6 +208,27 @@ export function parseSingleMarkdownBlock(rawBlock: string): ParsedCardDraft | nu
     tagsRaw = tagsMatch[1].trim().replace(/^[*#_:\s：]+|[*#_:\s：]+$/g, '');
   }
 
+  // 4.5 Match "换场景复述" / "场景迁移" (≤3条中文场景)
+  let transferPrompts: string[] | undefined;
+  const transferMatch = text.match(
+    /(?:^|\n)\s*[-*•·]?\s*(?:#{1,4}\s*|\*{0,2}|【)?(?:换场景复述|场景迁移|换场景|迁移场景)(?:】|\*{0,2})?[:：]?\s*\n*([\s\S]*?)(?=(?:\n---|\n#{1,4}\s+|\n\s*[-*•·]?\s*\*{0,2}(?:场景归类|标签提取|深度知识解析|我的原始表达)|$))/i
+  );
+  if (transferMatch) {
+    const rawLines = transferMatch[1]
+      .split('\n')
+      .map((l) =>
+        l
+          .trim()
+          .replace(/^[-*•·\d\.\s、()（）]+/, '')
+          .replace(/^[*_#:\s：]+|[*_#:\s：]+$/g, '')
+          .trim()
+      )
+      .filter((l) => l.length > 0 && !l.startsWith('---'));
+    if (rawLines.length > 0) {
+      transferPrompts = rawLines.slice(0, 3);
+    }
+  }
+
   // 5. Match "深度知识解析" section
   const explanationMatch = text.match(
     /(?:^|\n)(?:#{1,4}\s*|\*\*|【)?(?:深度知识解析|知识解析|深度解析|解析|Notes)(?:】|\*\*)?[:：]?\s*\n+([\s\S]*)$/i
@@ -280,6 +302,7 @@ export function parseSingleMarkdownBlock(rawBlock: string): ParsedCardDraft | nu
     phrases,
     redHighlights,
     variants,
+    transferPrompts,
   };
 }
 
@@ -335,6 +358,10 @@ export function createCardsFromDrafts(drafts: ParsedCardDraft[]): FlashCard[] {
       phrases: draft.phrases || [],
       redHighlights: draft.redHighlights || [],
       variants: draft.variants,
+      transferPrompts:
+        draft.transferPrompts && draft.transferPrompts.length > 0
+          ? draft.transferPrompts.slice(0, 3)
+          : undefined,
       createdAt: new Date(timestamp).toISOString(),
       nextReviewAt: new Date(timestamp).toISOString(),
       nextReviewDate: new Date(timestamp).toISOString(),

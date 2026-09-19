@@ -73,31 +73,26 @@ export function calculateNextReview(
 } {
   const now = new Date();
   let nextStage = currentStage;
-  let mastery: MasteryLevel = 'learning';
   const scale = getRetentionScaleFactor(targetRetention);
-  const baseInterval = EBBINGHAUS_INTERVALS[currentStage] || 1;
   let intervalDays = 1;
 
   if (rating === 'easy') {
-    // Jump 2 stages forward
+    // Easy：stage +2，不得直接赋予 mastered
     nextStage = Math.min(EBBINGHAUS_INTERVALS.length - 1, currentStage + 2);
     intervalDays = Math.max(1, Math.round((EBBINGHAUS_INTERVALS[nextStage] || 30) * scale * 1.3));
-    mastery = 'mastered';
   } else if (rating === 'good' || rating === 'mastered') {
-    // Normal Ebbinghaus advancement
+    // Good：stage +1
     nextStage = Math.min(EBBINGHAUS_INTERVALS.length - 1, currentStage + 1);
     intervalDays = Math.max(1, Math.round((EBBINGHAUS_INTERVALS[nextStage] || 15) * scale));
-    mastery = nextStage >= 3 ? 'mastered' : 'learning';
   } else if (rating === 'hard' || rating === 'uncertain') {
-    // Stay or minor step
+    // Hard：stage 不变，间隔 = 当前 stage 间隔 / 2，最少 1 天
     nextStage = Math.max(0, currentStage);
-    intervalDays = Math.max(1, Math.round(((EBBINGHAUS_INTERVALS[nextStage] || 1) / 2) * scale));
-    mastery = 'uncertain';
+    const stageInterval = EBBINGHAUS_INTERVALS[nextStage] || 1;
+    intervalDays = Math.max(1, Math.round((stageInterval / 2) * scale));
   } else {
-    // Task 9: Again 评分不写死 1 天，改为当前间隔 × 20%（至少 1 天）
+    // Again：nextStage = 0，intervalDays = 1（固定 1 天，不再乘旧 base）
     nextStage = 0;
-    intervalDays = Math.max(1, Math.round(baseInterval * 0.2));
-    mastery = 'learning';
+    intervalDays = 1;
   }
 
   const nextDate = new Date();
@@ -106,9 +101,66 @@ export function calculateNextReview(
   return {
     nextIntervalStage: nextStage,
     nextReviewAt: nextDate,
-    masteryLevel: mastery,
+    masteryLevel: 'learning',
     intervalDays,
   };
+}
+
+/**
+ * 独立的 mastered 掌握状态判定（从 calculateNextReview 剥离）
+ * 条件：
+ * 1. 有效 retrieval ≥ 4 次（不含 revealed/skipped）
+ * 2. pass ≥ 3 次
+ * 3. 至少跨越 1 个间隔周期
+ * 4. 若卡片有 transferPrompts，还需 transfer 模式 pass ≥ 1（无则跳过该条件）
+ */
+export function evaluateMasteryLevel(
+  card: FlashCard,
+  currentRecallResult?: 'pass' | 'partial' | 'fail' | 'revealed' | 'skipped',
+  currentMode?: 'original' | 'transfer'
+): MasteryLevel {
+  const stats = card.recallStats || {
+    attempts: 0,
+    successful: 0,
+    partial: 0,
+    failed: 0,
+    revealed: 0,
+    transferPassCount: 0,
+  };
+
+  const isCurrentPass = currentRecallResult === 'pass';
+  const isCurrentEffective =
+    currentRecallResult && currentRecallResult !== 'revealed' && currentRecallResult !== 'skipped';
+
+  const effectiveAttempts =
+    (stats.successful + stats.partial + stats.failed) + (isCurrentEffective ? 1 : 0);
+  const totalPass = stats.successful + (isCurrentPass ? 1 : 0);
+  const transferPass =
+    (stats.transferPassCount || 0) + (isCurrentPass && currentMode === 'transfer' ? 1 : 0);
+
+  // 跨越至少 1 个间隔周期
+  let hasSpannedInterval = (card.intervalStage ?? 0) >= 1;
+  if (!hasSpannedInterval && Array.isArray(card.reviewHistory) && card.reviewHistory.length >= 1) {
+    const firstReviewTime = new Date(card.reviewHistory[0]).getTime();
+    const nowTime = Date.now();
+    if (nowTime - firstReviewTime >= 24 * 60 * 60 * 1000 * 0.9) {
+      hasSpannedInterval = true;
+    }
+  }
+
+  const baseCondition = effectiveAttempts >= 4 && totalPass >= 3 && hasSpannedInterval;
+
+  const hasTransferPrompts =
+    Array.isArray(card.transferPrompts) &&
+    card.transferPrompts.some((p) => typeof p === 'string' && p.trim().length > 0);
+  const transferCondition = !hasTransferPrompts || transferPass >= 1;
+
+  if (baseCondition && transferCondition) {
+    return 'mastered';
+  }
+
+  const totalReviews = (card.reviewCount || 0) + (currentRecallResult ? 1 : 0);
+  return totalReviews > 0 ? 'uncertain' : 'learning';
 }
 
 // Compute new state based on rating
@@ -123,16 +175,17 @@ export function calculateReviewResult(
   reviewCount: number;
   lastReviewedAt: string;
 } {
-  const { nextIntervalStage, nextReviewAt, masteryLevel } = calculateNextReview(
+  const { nextIntervalStage, nextReviewAt } = calculateNextReview(
     card.intervalStage ?? 0,
     rating,
     targetRetention
   );
+  const newMastery = evaluateMasteryLevel(card);
 
   return {
     nextReviewAt: nextReviewAt.toISOString(),
     intervalStage: nextIntervalStage,
-    masteryLevel,
+    masteryLevel: newMastery,
     reviewCount: (card.reviewCount || 0) + 1,
     lastReviewedAt: new Date().toISOString(),
   };
@@ -150,6 +203,9 @@ export function createHistorySnapshot(
     prevMasteryLevel: card.masteryLevel,
     prevReviewCount: card.reviewCount ?? 0,
     prevLastReviewedAt: card.lastReviewedAt,
+    prevRecallStats: card.recallStats ? { ...card.recallStats } : undefined,
+    prevLastRecallResult: card.lastRecallResult,
+    prevLastReviewMode: card.lastReviewMode,
     rating,
     timestamp: Date.now(),
   };

@@ -118,6 +118,21 @@ export interface FlashCard {
   spokenDuration?: number;
   lastSpeakDuration?: number;
   speechRecords?: SpeechRecord[];
+  /** 换场景复述提示语（≤3条中文场景） */
+  transferPrompts?: string[];
+  /** 主动提取统计数据 */
+  recallStats?: {
+    attempts: number;
+    successful: number;
+    partial: number;
+    failed: number;
+    revealed: number;
+    transferPassCount?: number;
+  };
+  /** 最近一次提取结果 */
+  lastRecallResult?: 'pass' | 'partial' | 'fail' | 'revealed' | 'skipped';
+  /** 最近一次复习模式 */
+  lastReviewMode?: 'original' | 'transfer';
 }
 
 export interface ReviewHistoryEntry {
@@ -129,6 +144,15 @@ export interface ReviewHistoryEntry {
   prevLastReviewedAt?: string;
   rating: ReviewRating;
   timestamp: number;
+  prevRecallStats?: FlashCard['recallStats'];
+  prevLastRecallResult?: FlashCard['lastRecallResult'];
+  prevLastReviewMode?: FlashCard['lastReviewMode'];
+}
+
+export interface RetrievalContext {
+  result: 'pass' | 'partial' | 'fail' | 'revealed' | 'skipped';
+  mode: 'original' | 'transfer';
+  pronunciationCoverage?: number;
 }
 
 export interface DailyQuest {

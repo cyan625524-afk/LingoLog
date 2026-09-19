@@ -197,7 +197,7 @@ export const WechatReminderModal: React.FC<WechatReminderModalProps> = ({
 
     // 异步同步到 Supabase 云端，支持云端巡检定时任务
     saveDailyReminderConfig({
-      enabled: nextSettings.wxpusherEnabled,
+      enabled: Boolean(nextSettings.wxpusherEnabled),
       reminderTime: nextSettings.reminderTime,
       wxpusherUid: nextSettings.wxpusherUid || '',
       customAppToken: nextSettings.wxpusherAppToken,

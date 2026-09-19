@@ -10,6 +10,7 @@ import {
   ReviewRating,
   CardCategory,
   UserProfile,
+  RetrievalContext,
 } from './types';
 import { Navbar } from './components/Navbar';
 import { TopHeader } from './components/TopHeader';
@@ -64,6 +65,7 @@ import {
 import { sound } from './utils/audio';
 import {
   calculateNextReview,
+  evaluateMasteryLevel,
   createHistorySnapshot,
   isCardDue,
   formatDate,
@@ -415,8 +417,12 @@ export default function App() {
     );
   };
 
-  // 2. Grade Flashcard in Review
-  const handleGradeCard = (cardId: string, rating: ReviewRating) => {
+  // 2. Grade Flashcard in Review (支持主动提取上下文)
+  const handleGradeCard = (
+    cardId: string,
+    rating: ReviewRating,
+    context?: RetrievalContext
+  ) => {
     const card = cards.find((c) => c.id === cardId);
     if (!card) return;
 
@@ -425,10 +431,46 @@ export default function App() {
     setReviewHistoryStack((prev) => [snapshot, ...prev.slice(0, 19)]);
 
     // Calculate next review interval with settings.targetRetention
-    const { nextReviewAt, nextIntervalStage, masteryLevel } = calculateNextReview(
+    const { nextReviewAt, nextIntervalStage } = calculateNextReview(
       card.intervalStage ?? 0,
       rating,
       settings.targetRetention || 90
+    );
+
+    // 计算更新后的 recallStats
+    const prevStats = card.recallStats || {
+      attempts: 0,
+      successful: 0,
+      partial: 0,
+      failed: 0,
+      revealed: 0,
+      transferPassCount: 0,
+    };
+
+    const recallResult = context?.result || (rating === 'again' ? 'fail' : 'pass');
+    const reviewMode = context?.mode || 'original';
+
+    const isPass = recallResult === 'pass';
+    const isPartial = recallResult === 'partial';
+    const isFail = recallResult === 'fail';
+    const isRevealed = recallResult === 'revealed';
+    const isSkipped = recallResult === 'skipped';
+
+    const nextRecallStats = {
+      attempts: prevStats.attempts + (isSkipped ? 0 : 1),
+      successful: prevStats.successful + (isPass ? 1 : 0),
+      partial: prevStats.partial + (isPartial ? 1 : 0),
+      failed: prevStats.failed + (isFail ? 1 : 0),
+      revealed: prevStats.revealed + (isRevealed ? 1 : 0),
+      transferPassCount:
+        (prevStats.transferPassCount || 0) + (isPass && reviewMode === 'transfer' ? 1 : 0),
+    };
+
+    // 独立计算掌握状态
+    const nextMasteryLevel = evaluateMasteryLevel(
+      { ...card, recallStats: nextRecallStats },
+      recallResult,
+      reviewMode
     );
 
     const nowIso = new Date().toISOString();
@@ -439,17 +481,29 @@ export default function App() {
               ...c,
               nextReviewAt: nextReviewAt.toISOString(),
               intervalStage: nextIntervalStage,
-              masteryLevel,
+              masteryLevel: nextMasteryLevel,
               reviewCount: (c.reviewCount || 0) + 1,
               lastReviewedAt: nowIso,
               reviewHistory: [...(c.reviewHistory || []), nowIso],
+              recallStats: nextRecallStats,
+              lastRecallResult: recallResult,
+              lastReviewMode: reviewMode,
             }
           : c
       )
     );
 
     // Reward feathers
-    const featherReward = rating === 'easy' ? 4 : rating === 'good' ? 3 : rating === 'hard' ? 2 : 1;
+    const featherReward =
+      recallResult === 'revealed'
+        ? 1
+        : rating === 'easy'
+        ? 4
+        : rating === 'good'
+        ? 3
+        : rating === 'hard'
+        ? 2
+        : 1;
     addFeathers(featherReward);
     recordActivity('review', 2);
 
@@ -483,6 +537,9 @@ export default function App() {
               masteryLevel: lastEntry.prevMasteryLevel,
               lastReviewedAt: lastEntry.prevLastReviewedAt,
               reviewHistory: (c.reviewHistory || []).slice(0, -1),
+              recallStats: lastEntry.prevRecallStats ? { ...lastEntry.prevRecallStats } : undefined,
+              lastRecallResult: lastEntry.prevLastRecallResult,
+              lastReviewMode: lastEntry.prevLastReviewMode,
             }
           : c
       )
@@ -1011,6 +1068,7 @@ export default function App() {
       {/* Full Spaced Flashcard Review Modal */}
       <FlashcardReviewModal
         cards={activeReviewQueue}
+        allCards={cards}
         isOpen={isReviewModalOpen}
         onClose={() => setIsReviewModalOpen(false)}
         onGradeCard={handleGradeCard}
